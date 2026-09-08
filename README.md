@@ -52,7 +52,8 @@ local Window = Onyx:CreateWindow({
     RailWidth    = 158,
     Resizable    = true,                     -- bottom-right grip
     ShowUserInfo = true,                     -- avatar + name in the rail
-    MobileButton = true,                     -- floating toggle on touch devices
+    UnibarIcon   = true,                     -- show/hide button in Roblox's topbar
+    MobileButton = "auto",                   -- floating button: auto | true | false
     OnClose      = "hide",                   -- or a function; default asks to unload
 })
 ```
@@ -71,7 +72,26 @@ local Window = Onyx:CreateWindow({
 
 The topbar has a minimize button and a close button; close opens a confirm
 dialog and then unloads the whole library. Pass `OnClose = "hide"` to make it
-hide instead, or a function to run your own teardown first.
+hide instead, or a function to run your own teardown first. A dialog opened
+while the window is minimized or hidden expands it first, since the dialog is
+drawn inside the window.
+
+### Showing and hiding
+
+The show/hide control is an icon added to Roblox's own topbar (the unibar),
+next to the chat and nine-dot buttons. It is a diamond mark drawn from frames,
+so it needs no asset upload and no font coverage, and it dims while the
+interface is hidden.
+
+This works by widening the fixed-width frames inside
+`CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame` to make room, re-measuring every
+two seconds because Roblox adds and resizes its own icons at will. `Onyx:Unload()`
+puts those widths back. Where there is no unibar to attach to — Studio, an
+older client, a future rewrite — nothing breaks: after a five second grace
+period a floating draggable button appears instead, so the interface is never
+unreachable. Force one or the other with `MobileButton = true` / `false`, or
+turn the topbar icon off with `UnibarIcon = false`. The toggle keybind works
+either way.
 
 ### Tabs and sections
 
@@ -256,8 +276,18 @@ Onyx:Notify({
 Onyx:Notify("Short form")
 ```
 
-Toasts stack in the bottom-right, show a countdown line, and dismiss on click.
+Each toast carries a status badge with a drawn mark (a check, an alert, an
+info bar, or the Onyx diamond for the default type) tinted to match the type,
+a countdown underline, and dismisses on click. Hovering pauses the countdown.
 The call returns `{ Close = function }`.
+
+Move the stack with:
+
+```lua
+Onyx:SetNotificationCorner("top-right")
+-- bottom-right (default) | bottom-left | bottom-center
+-- top-right | top-left | top-center
+```
 
 ## Dialogs
 
@@ -305,6 +335,15 @@ Onyx:LoadConfigTable(tbl)
 ```
 
 `Color3` and `EnumItem` values (colours, keybinds) survive the round trip.
+
+## Interaction focus
+
+One element owns the pointer at a time. While a slider is being dragged or a
+popout is open, `Onyx.Focus` holds that element and everything else paints
+itself idle and refuses input — so a second slider cannot be grabbed mid-drag,
+and the row behind an open dropdown stops glowing. (Roblox does not fire
+`MouseLeave` when another GUI covers an object, so without this the row under
+a popout stays lit.) Focus is released on mouse-up, on close, and on unload.
 
 ## Lifecycle
 

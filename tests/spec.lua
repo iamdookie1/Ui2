@@ -235,6 +235,111 @@ assert(countRows() == 1, "search filter should leave one row, got " .. countRows
 searchBox.Text = ""
 assert(countRows() == 2, "clearing the search should restore both rows")
 
+--------------------------------------------------------------------
+-- interaction focus: one element owns the pointer at a time
+--------------------------------------------------------------------
+local function sliderHit(slider)
+	return slider.Instance:FindFirstChild("Lane"):FindFirstChild("Hit")
+end
+local function press(x)
+	return { UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(x, 0, 0) }
+end
+
+local sliderA = Misc:Slider({ Title = "A", Min = 0, Max = 100, Default = 0 })
+local sliderB = Misc:Slider({ Title = "B", Min = 0, Max = 100, Default = 0 })
+
+-- track is 200 wide at x=0 in the mock, so x=100 is the midpoint
+sliderHit(sliderA).InputBegan:Fire(press(100))
+assert(Onyx.Focus == sliderA, "dragging a slider should take focus")
+assert(sliderA:Get() == 50, "slider A should have moved, got " .. tostring(sliderA:Get()))
+
+sliderHit(sliderB).InputBegan:Fire(press(150))
+assert(sliderB:Get() == 0, "slider B must ignore input while slider A is captured")
+assert(Onyx.Focus == sliderA, "focus should still belong to slider A")
+
+MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+assert(Onyx.Focus == nil, "releasing should clear focus")
+
+sliderHit(sliderB).InputBegan:Fire(press(150))
+assert(sliderB:Get() == 75, "slider B should work once focus is free, got " .. tostring(sliderB:Get()))
+MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+
+-- a row behind an open popout must not light up on hover
+local ddRow = dd.Instance
+local idle = ddRow.BackgroundColor3
+dd.Instance.MouseButton1Click:Fire()
+MOCK.step(0.5)
+assert(Onyx.Focus ~= nil, "an open popout should hold focus")
+ddRow.MouseEnter:Fire()
+assert(ddRow.BackgroundColor3 == idle, "the row behind an open dropdown must stay idle")
+tog.Instance.MouseEnter:Fire()
+assert(tog.Instance.BackgroundColor3 == idle, "other rows must stay idle while a popout is open")
+
+-- and it lights up again the moment the popout closes
+dd.Instance.MouseButton1Click:Fire()
+MOCK.step(0.5)
+assert(Onyx.Focus == nil, "closing the popout should release focus")
+assert(ddRow.BackgroundColor3 ~= idle, "the hovered row should light up once focus is free")
+ddRow.MouseLeave:Fire()
+tog.Instance.MouseLeave:Fire()
+
+--------------------------------------------------------------------
+-- a dialog has to expand a minimized window to be visible
+--------------------------------------------------------------------
+Window:Minimize(true)
+assert(Window.Minimized == true, "window should be minimized")
+local expandDialog = Window:Dialog({ Title = "Still visible?", Content = "yes" })
+assert(Window.Minimized == false, "opening a dialog must expand a minimized window")
+expandDialog.Close()
+MOCK.step(0.5)
+
+Window:SetVisible(false)
+local hiddenDialog = Window:Dialog({ Title = "Shown", Content = "yes" })
+assert(Window.Visible == true, "opening a dialog must show a hidden window")
+hiddenDialog.Close()
+MOCK.step(0.5)
+
+--------------------------------------------------------------------
+-- notifications
+--------------------------------------------------------------------
+local toastB = Onyx:Notify({ Title = "Saved", Content = "config.json", Type = "success", Duration = 4 })
+local toastCard = toastB.Instance
+assert(toastCard:FindFirstChild("Badge"), "notification should have a status badge")
+assert(toastCard.Badge:FindFirstChild("Glyph"), "status badge should have a drawn glyph")
+assert(#toastCard.Badge.Glyph:GetChildren() == 2, "a check mark is drawn from two bars")
+assert(toastCard:FindFirstChild("Timer"), "notification should have a countdown")
+assert(toastCard:FindFirstChild("Body"), "notification should have a body")
+toastB.Close()
+MOCK.step(1)
+
+for _, kind in ipairs({ "info", "warning", "error", "default" }) do
+	local t = Onyx:Notify({ Title = kind, Content = "body", Type = kind, Duration = 0 })
+	assert(t.Instance.Badge:FindFirstChild("Glyph"), kind .. " should draw a glyph")
+	t.Close()
+end
+MOCK.step(1)
+
+Onyx:SetNotificationCorner("top-left")
+assert(Onyx.NotificationCorner == "top-left", "notification corner not stored")
+Onyx:SetNotificationCorner("bottom-right")
+
+--------------------------------------------------------------------
+-- visibility control: unibar icon with a floating fallback
+--------------------------------------------------------------------
+-- the mock has no CoreGui.TopBarApp, so the icon cannot attach and the
+-- fallback button should appear once the grace period elapses
+MOCK.step(6)
+assert(Window.Unibar ~= nil, "a unibar attach should have been attempted")
+assert(Window.Unibar.Icon == nil, "no unibar exists in the mock, so no icon")
+assert(Window.MobileButton ~= nil, "the floating fallback should exist after the grace period")
+assert(Window.MobileButton:FindFirstChild("OnyxMark"), "the fallback button should use the Onyx mark")
+
+Window:SetVisible(true)
+local beforeToggle = Window.Visible
+Window.MobileButton.MouseButton1Click:Fire()
+assert(Window.Visible ~= beforeToggle, "the fallback button should toggle the window")
+Window:SetVisible(true)
+
 Settings:Button({ Title = "Unload", Callback = function() end })
 
 MOCK.step(3)
@@ -248,6 +353,7 @@ print("instances created: " .. #MOCK.allInstances)
 
 -- teardown
 Onyx:Unload()
+assert(Onyx.Focus == nil, "unload should release focus")
 assert(Onyx.Unloaded == true, "unload flag not set")
 assert(#Onyx.Windows == 0, "windows not cleared")
 assert(Onyx.Root.Destroyed == true, "root screengui not destroyed")

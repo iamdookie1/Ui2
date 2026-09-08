@@ -224,6 +224,7 @@ Instance = {}
 function Instance.new(className, parent)
 	local self = setmetatable({
 		_props = { ClassName = className, Name = className },
+		_attrs = {},
 		_children = {},
 		_events = {},
 		_propSignals = {},
@@ -267,6 +268,16 @@ function Instance.new(className, parent)
 		return sigs[prop]
 	end
 	methods.IsA = function(s, cls) return rawget(s, "_props").ClassName == cls end
+	methods.SetAttribute = function(s, name, value) rawget(s, "_attrs")[name] = value end
+	methods.GetAttribute = function(s, name) return rawget(s, "_attrs")[name] end
+	methods.IsDescendantOf = function(s, ancestor)
+		local node = rawget(s, "_props").Parent
+		while node do
+			if node == ancestor then return true end
+			node = rawget(node, "_props").Parent
+		end
+		return false
+	end
 	methods.Clone = function(s) return Instance.new(rawget(s, "_props").ClassName) end
 	methods.CaptureFocus = function(s) rawget(s, "_events").Focused:Fire() end
 	methods.ReleaseFocus = function(s) rawget(s, "_events").FocusLost:Fire(false) end
@@ -284,18 +295,26 @@ M.allInstances = allInstances
 --------------------------------------------------------------------
 local queue = {}
 M.clock = 0
+-- There are no coroutines here, so a yield is modelled as unwinding the
+-- current "thread": task.wait throws a sentinel that task.spawn swallows. A
+-- polling loop therefore runs exactly one iteration instead of hanging.
+local YIELD = "__mock_yield__"
+
+local function runThread(fn, ...)
+	local ok, err = pcall(fn, ...)
+	if not ok and tostring(err):find(YIELD, 1, true) == nil then
+		M.errors = M.errors or {}
+		table.insert(M.errors, tostring(err))
+		print("[task error] " .. tostring(err))
+	end
+	return ok
+end
+
 task = {
-	spawn = function(fn, ...) 
-		local ok, err = pcall(fn, ...)
-		if not ok then
-			M.errors = M.errors or {}
-			table.insert(M.errors, tostring(err))
-			print("[task.spawn error] " .. tostring(err))
-		end
-	end,
+	spawn = runThread,
 	defer = function(fn, ...) table.insert(queue, { at = M.clock, fn = fn, args = table.pack(...) }) end,
 	delay = function(t, fn, ...) table.insert(queue, { at = M.clock + t, fn = fn, args = table.pack(...) }) end,
-	wait  = function() end,
+	wait  = function() error(YIELD, 0) end,
 }
 function M.step(seconds)
 	M.clock = M.clock + (seconds or 0)
@@ -304,12 +323,7 @@ function M.step(seconds)
 	local carry = {}
 	for _, job in ipairs(pending) do
 		if job.at <= M.clock then
-			local ok, err = pcall(job.fn, table.unpack(job.args, 1, job.args.n))
-			if not ok then
-				M.errors = M.errors or {}
-				table.insert(M.errors, tostring(err))
-				print("[task error] " .. tostring(err))
-			end
+			runThread(job.fn, table.unpack(job.args, 1, job.args.n))
 		else
 			table.insert(carry, job)
 		end
@@ -339,13 +353,19 @@ end
 
 local TweenService = service("TweenService")
 TweenService._methods.Create = function(_, obj, info, props)
-	return {
+	local tween
+	tween = {
 		Play = function()
 			for k, v in pairs(props) do obj[k] = v end
 		end,
+		Pause = function() end,
 		Cancel = function() end,
 		Completed = newSignal(),
+		Finish = function() tween.Completed:Fire(Enum.PlaybackState.Completed) end,
 	}
+	M.tweens = M.tweens or {}
+	table.insert(M.tweens, tween)
+	return tween
 end
 
 local UIS = service("UserInputService", function(s)

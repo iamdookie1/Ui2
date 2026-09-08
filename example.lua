@@ -198,11 +198,34 @@ Interface:Keybind({
 	Callback = function() Window:Toggle() end,
 })
 
+Interface:Dropdown({
+	Title    = "Notification corner",
+	Values   = { "bottom-right", "bottom-left", "bottom-center", "top-right", "top-left", "top-center" },
+	Default  = "bottom-right",
+	Callback = function(corner) Onyx:SetNotificationCorner(corner) end,
+})
+
+local Toasts = Config:CreateSection("Notifications")
+
+for _, kind in ipairs({ "default", "info", "success", "warning", "error" }) do
+	Toasts:Button({
+		Title    = "Show " .. kind,
+		Callback = function()
+			Onyx:Notify({
+				Title    = kind:sub(1, 1):upper() .. kind:sub(2),
+				Content  = "Hover to hold the countdown, click to dismiss.",
+				Type     = kind,
+				Duration = 5,
+			})
+		end,
+	})
+end
+
 Interface:Button({ Title = "Unload", Confirm = true, Callback = function() Onyx:Unload() end })
 
 Onyx:Notify({
 	Title    = "Onyx loaded",
-	Content  = "Press Right Shift to hide the interface.",
+	Content  = "Right Shift, or the diamond in the topbar, hides the interface.",
 	Duration = 5,
 	Type     = "success",
 })

@@ -47,6 +47,8 @@ local Onyx = {
 	Flags       = {},          -- flag -> current value
 	Options     = {},          -- flag -> element object
 	Connections = {},          -- tracked RBXScriptConnections
+	Focus       = nil,         -- element currently owning the pointer
+	Teardown    = {},          -- internal cleanup run before Unload destroys the GUI
 	AccentBound = {},          -- { {Instance, propertyName}, ... }
 
 	Folder      = "OnyxUI",    -- config folder used by SaveConfig/LoadConfig
@@ -324,37 +326,94 @@ local ToastLayer = New("Frame", {
 })
 
 -- ================================================================
+--  INTERACTION FOCUS
+-- ================================================================
+--
+--  One element at a time owns the pointer. While a slider is being dragged or
+--  a popout is open, everything else paints itself idle and refuses input, so
+--  a second slider can't be grabbed mid-drag and the row behind an open
+--  dropdown stops glowing. Roblox does not fire MouseLeave when another GUI
+--  covers an object, so without this the row under a popout stays lit.
+
+local HideTooltip  -- assigned by the tooltip block below
+
+local FocusWatchers = {}  -- { { Instance = gui, Refresh = fn }, ... }
+
+local function FocusBlocked(owner)
+	return Onyx.Focus ~= nil and Onyx.Focus ~= owner
+end
+
+local function SetFocus(owner)
+	if Onyx.Focus == owner then return end
+	Onyx.Focus = owner
+	if owner and HideTooltip then HideTooltip() end
+	for i = #FocusWatchers, 1, -1 do
+		local watcher = FocusWatchers[i]
+		if watcher.Instance and watcher.Instance.Parent then
+			watcher.Refresh()
+		else
+			table.remove(FocusWatchers, i)
+		end
+	end
+end
+
+local function ClearFocus(owner)
+	if Onyx.Focus == owner then SetFocus(nil) end
+end
+
+local function IsClick(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch
+end
+
+-- ================================================================
 --  INTERACTION HELPERS
 -- ================================================================
 
+-- Tracks hover/press on a button and hands the state to `paint`. Hover is
+-- still tracked while another element holds focus, so the moment focus clears
+-- whatever the pointer is actually over lights up.
+local function Hoverable(gui, paint, owner)
+	owner = owner or gui
+	local inside, down = false, false
+
+	local function refresh()
+		if FocusBlocked(owner) then
+			paint("idle")
+		elseif down and inside then
+			paint("press")
+		elseif inside then
+			paint("hover")
+		else
+			paint("idle")
+		end
+	end
+
+	gui.MouseEnter:Connect(function() inside = true; refresh() end)
+	gui.MouseLeave:Connect(function() inside = false; down = false; refresh() end)
+	gui.InputBegan:Connect(function(input)
+		if IsClick(input) then down = true; refresh() end
+	end)
+	gui.InputEnded:Connect(function(input)
+		if IsClick(input) then down = false; refresh() end
+	end)
+
+	table.insert(FocusWatchers, { Instance = gui, Refresh = refresh })
+	return refresh
+end
+
 -- hover / press tinting for any BackgroundColor3 driven button
-local function Interact(button, base, hover, press)
+local function Interact(button, base, hover, press, owner)
 	base  = base  or Theme.Surface
 	hover = hover or Theme.Hover
 	press = press or Theme.Active
 
-	local down = false
-	local inside = false
-
-	local function refresh()
+	local refresh = Hoverable(button, function(state)
 		local target = base
-		if down and inside then target = press
-		elseif inside then target = hover end
+		if state == "press" then target = press
+		elseif state == "hover" then target = hover end
 		Tween(button, { BackgroundColor3 = target }, EASE_SNAP)
-	end
-
-	button.MouseEnter:Connect(function() inside = true;  refresh() end)
-	button.MouseLeave:Connect(function() inside = false; down = false; refresh() end)
-	button.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			down = true; refresh()
-		end
-	end)
-	button.InputEnded:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			down = false; refresh()
-		end
-	end)
+	end, owner)
 
 	return {
 		SetBase = function(c) base = c; refresh() end,
@@ -430,6 +489,7 @@ local Tooltip do
 	Tooltip = {
 		Show = function(text, owner)
 			if not text or text == "" then return end
+			if Onyx.Focus ~= nil then return end
 			current = owner
 			label.Text = text
 			holder.Visible = true
@@ -441,6 +501,8 @@ local Tooltip do
 		end,
 	}
 end
+
+HideTooltip = function() Tooltip.Hide() end
 
 -- attaches a hover tooltip to any GuiObject
 local function AttachTooltip(gui, text)
@@ -454,35 +516,74 @@ end
 --  NOTIFICATIONS
 -- ================================================================
 
+local TOAST_WIDTH = 300
+
 local ToastHolder = New("Frame", {
 	Name                   = "Stack",
 	BackgroundTransparency = 1,
 	AnchorPoint            = Vector2.new(1, 1),
 	Position               = UDim2.new(1, -18, 1, -18),
-	Size                   = UDim2.fromOffset(288, 0),
+	Size                   = UDim2.fromOffset(TOAST_WIDTH, 0),
 	AutomaticSize          = Enum.AutomaticSize.Y,
 	ZIndex                 = 801,
 	Parent                 = ToastLayer,
-}, {
-	New("UIListLayout", {
-		Padding             = UDim.new(0, 8),
-		SortOrder           = Enum.SortOrder.LayoutOrder,
-		VerticalAlignment   = Enum.VerticalAlignment.Bottom,
-		HorizontalAlignment = Enum.HorizontalAlignment.Right,
-	}),
+})
+
+local ToastLayout = New("UIListLayout", {
+	Padding             = UDim.new(0, 8),
+	SortOrder           = Enum.SortOrder.LayoutOrder,
+	VerticalAlignment   = Enum.VerticalAlignment.Bottom,
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	Parent              = ToastHolder,
 })
 
 local ToastOrder = 0
 
-local TOAST_COLORS = {
-	default = Theme.Accent,
-	info    = Theme.Info,
-	success = Theme.Success,
-	warning = Theme.Warning,
-	warn    = Theme.Warning,
-	error   = Theme.Danger,
-	danger  = Theme.Danger,
+local TOAST_KINDS = {
+	default = { Color = function() return Theme.Accent end,  Glyph = "diamond" },
+	info    = { Color = function() return Theme.Info end,    Glyph = "info" },
+	success = { Color = function() return Theme.Success end, Glyph = "check" },
+	warning = { Color = function() return Theme.Warning end, Glyph = "alert" },
+	warn    = { Color = function() return Theme.Warning end, Glyph = "alert" },
+	error   = { Color = function() return Theme.Danger end,  Glyph = "alert" },
+	danger  = { Color = function() return Theme.Danger end,  Glyph = "alert" },
 }
+
+-- Status marks drawn from bars, for the same reason the chevrons are: the
+-- default font has no dependable glyph for any of these.
+local function StatusGlyph(parent, kind, color, zIndex)
+	local box = New("Frame", {
+		Name = "Glyph", BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(12, 12), ZIndex = zIndex, Parent = parent,
+	})
+
+	local function bar(w, h, x, y, rotation, radius)
+		local piece = New("Frame", {
+			BackgroundColor3 = color, BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(w, h), Rotation = rotation or 0,
+			ZIndex = zIndex + 1, Parent = box,
+		})
+		Corner(radius or 1, piece)
+		return piece
+	end
+
+	if kind == "check" then
+		bar(4.5, 1.7, 3.6, 7.8, 45)
+		bar(8.2, 1.7, 7.4, 6.1, -52)
+	elseif kind == "alert" then
+		bar(1.7, 5.6, 6, 4.2, 0)
+		bar(1.9, 1.9, 6, 9.4, 0, 1)
+	elseif kind == "info" then
+		bar(1.9, 1.9, 6, 2.6, 0, 1)
+		bar(1.7, 5.6, 6, 7.8, 0)
+	else
+		bar(5.2, 5.2, 6, 6, 45, 1)
+	end
+
+	return box
+end
 
 function Onyx.Notify(a, b)
 	local cfg = b
@@ -493,47 +594,44 @@ function Onyx.Notify(a, b)
 	local title    = tostring(cfg.Title or cfg.Name or "Notification")
 	local content  = cfg.Content or cfg.Description or cfg.Text
 	local duration = tonumber(cfg.Duration or cfg.Time) or 4
-	local kind     = tostring(cfg.Type or cfg.Kind or "default"):lower()
-	local accent   = TOAST_COLORS[kind] or Theme.Accent
+	local kindName = tostring(cfg.Type or cfg.Kind or "default"):lower()
+	local kind     = TOAST_KINDS[kindName] or TOAST_KINDS.default
+	local accent   = cfg.Color or kind.Color()
 
 	ToastOrder = ToastOrder + 1
 
+	-- the layout owns the slot's position, so the card slides inside it
 	local slot = New("Frame", {
-		Name                   = "Slot",
-		BackgroundTransparency = 1,
-		Size                   = UDim2.new(1, 0, 0, 0),
-		AutomaticSize          = Enum.AutomaticSize.Y,
-		LayoutOrder            = ToastOrder,
-		ZIndex                 = 802,
-		Parent                 = ToastHolder,
+		Name = "Slot", BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = ToastOrder, ZIndex = 802, Parent = ToastHolder,
 	})
 
 	local card = New("Frame", {
-		Name                   = "Toast",
-		BackgroundColor3       = Theme.Surface,
-		BackgroundTransparency = 1,
-		Size                   = UDim2.new(1, 0, 0, 0),
-		AutomaticSize          = Enum.AutomaticSize.Y,
-		ClipsDescendants       = true,
-		ZIndex                 = 802,
-		Parent                 = slot,
+		Name = "Toast", BackgroundColor3 = Theme.Surface, BackgroundTransparency = 1,
+		BorderSizePixel = 0, Position = UDim2.fromOffset(22, 0),
+		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+		ClipsDescendants = true, ZIndex = 802, Parent = slot,
 	})
-	Corner(7, card)
+	Corner(10, card)
 	local cardStroke = Stroke(card, Theme.Line, 1)
 
-	-- accent stripe down the left edge
-	local stripe = New("Frame", {
-		Name = "Stripe", BackgroundColor3 = accent, BackgroundTransparency = 1,
-		BorderSizePixel = 0, Size = UDim2.new(0, 2, 1, -16),
-		Position = UDim2.fromOffset(0, 8), ZIndex = 804, Parent = card,
+	-- status badge
+	local badge = New("Frame", {
+		Name = "Badge", BackgroundColor3 = accent, BackgroundTransparency = 1,
+		BorderSizePixel = 0, Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(28, 28), ZIndex = 803, Parent = card,
 	})
-	Corner(2, stripe)
+	Corner(9, badge)
+	local badgeStroke = Stroke(badge, accent, 1)
+	local glyph = StatusGlyph(badge, kind.Glyph, accent, 804)
 
 	local body = New("Frame", {
-		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+		Name = "Body", BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(50, 0), Size = UDim2.new(1, -62, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 803, Parent = card,
 	})
-	Padding(body, 11, 12, 14, 12)
+	Padding(body, 13, 14, 0, 0)
 	List(body, 3)
 
 	local titleLabel = Text({
@@ -552,59 +650,338 @@ function Onyx.Notify(a, b)
 		})
 	end
 
-	-- countdown line along the bottom
-	local timerTrack = New("Frame", {
-		BackgroundColor3 = Theme.LineBright, BackgroundTransparency = 1,
-		BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 1),
-		ZIndex = 804, Parent = card,
-	})
+	-- countdown, clipped by the card's corners into a short underline
 	local timerFill = New("Frame", {
-		BackgroundColor3 = accent, BackgroundTransparency = 1,
-		BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), ZIndex = 805, Parent = timerTrack,
+		Name = "Timer", BackgroundColor3 = accent, BackgroundTransparency = 1,
+		BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 2),
+		ZIndex = 805, Parent = card,
 	})
 
-	card.Position = UDim2.fromOffset(28, 0)
-	Tween(card,        { BackgroundTransparency = 0, Position = UDim2.fromOffset(0, 0) }, EASE_SMOOTH)
-	Tween(cardStroke,  { Transparency = 0 }, EASE_SMOOTH)
-	Tween(stripe,      { BackgroundTransparency = 0 }, EASE_SMOOTH)
-	Tween(titleLabel,  { TextTransparency = 0 }, EASE_SMOOTH)
-	Tween(timerTrack,  { BackgroundTransparency = 0.55 }, EASE_SMOOTH)
-	Tween(timerFill,   { BackgroundTransparency = 0.15 }, EASE_SMOOTH)
-	if bodyLabel then Tween(bodyLabel, { TextTransparency = 0 }, EASE_SMOOTH) end
+	local function fade(into)
+		local info = into and EASE_SMOOTH or EASE_OUT
+		Tween(card, {
+			BackgroundTransparency = into and 0 or 1,
+			Position = UDim2.fromOffset(into and 0 or 22, 0),
+		}, info)
+		Tween(cardStroke,  { Transparency = into and 0 or 1 }, info)
+		Tween(badge,       { BackgroundTransparency = into and 0.88 or 1 }, info)
+		Tween(badgeStroke, { Transparency = into and 0.6 or 1 }, info)
+		Tween(timerFill,   { BackgroundTransparency = into and 0.25 or 1 }, info)
+		Tween(titleLabel,  { TextTransparency = into and 0 or 1 }, info)
+		if bodyLabel then Tween(bodyLabel, { TextTransparency = into and 0 or 1 }, info) end
+		for _, piece in ipairs(glyph:GetChildren()) do
+			if piece:IsA("Frame") then
+				Tween(piece, { BackgroundTransparency = into and 0 or 1 }, info)
+			end
+		end
+	end
+
+	fade(true)
 
 	local closed = false
 	local function close()
 		if closed then return end
 		closed = true
-		Tween(card,       { BackgroundTransparency = 1, Position = UDim2.fromOffset(28, 0) }, EASE_OUT)
-		Tween(cardStroke, { Transparency = 1 }, EASE_OUT)
-		Tween(stripe,     { BackgroundTransparency = 1 }, EASE_OUT)
-		Tween(titleLabel, { TextTransparency = 1 }, EASE_OUT)
-		Tween(timerTrack, { BackgroundTransparency = 1 }, EASE_OUT)
-		Tween(timerFill,  { BackgroundTransparency = 1 }, EASE_OUT)
-		if bodyLabel then Tween(bodyLabel, { TextTransparency = 1 }, EASE_OUT) end
+		fade(false)
 		task.delay(0.24, function()
 			if slot then slot:Destroy() end
 		end)
 	end
 
-	-- click to dismiss early
+	-- click anywhere to dismiss; hovering holds the countdown
 	local hit = New("TextButton", {
-		BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
-		ZIndex = 806, Parent = card, AutoButtonColor = false,
+		BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+		Size = UDim2.fromScale(1, 1), ZIndex = 806, Parent = card,
 	})
 	hit.MouseButton1Click:Connect(close)
 
 	if duration > 0 then
-		Tween(timerFill, { Size = UDim2.fromScale(0, 1) }, TweenInfo.new(duration, Enum.EasingStyle.Linear))
-		task.delay(duration, close)
+		local countdown = Tween(timerFill, { Size = UDim2.new(0, 0, 0, 2) },
+			TweenInfo.new(duration, Enum.EasingStyle.Linear))
+
+		if countdown then
+			countdown.Completed:Connect(function(state)
+				if state == Enum.PlaybackState.Completed then close() end
+			end)
+			hit.MouseEnter:Connect(function()
+				pcall(function() countdown:Pause() end)
+				Tween(card, { BackgroundColor3 = Theme.SurfaceAlt }, EASE_SNAP)
+			end)
+			hit.MouseLeave:Connect(function()
+				if closed then return end
+				pcall(function() countdown:Play() end)
+				Tween(card, { BackgroundColor3 = Theme.Surface }, EASE_SNAP)
+			end)
+		else
+			task.delay(duration, close)
+		end
 	end
 
 	return { Close = close, Instance = card }
 end
 
 Onyx.Notification = Onyx.Notify
+
+-- where the stack sits: "bottom-right" (default), "bottom-left",
+-- "top-right", "top-left", "top-center", "bottom-center"
+function Onyx.SetNotificationCorner(a, b)
+	local corner = b
+	if a ~= Onyx then corner = a end
+	corner = tostring(corner or "bottom-right"):lower()
+
+	local top    = corner:find("top") ~= nil
+	local left   = corner:find("left") ~= nil
+	local center = corner:find("center") ~= nil
+
+	local x = center and 0.5 or (left and 0 or 1)
+	ToastHolder.AnchorPoint = Vector2.new(x, top and 0 or 1)
+	ToastHolder.Position = UDim2.new(
+		x, center and 0 or (left and 18 or -18),
+		top and 0 or 1, top and 18 or -18
+	)
+	ToastLayout.VerticalAlignment = top and Enum.VerticalAlignment.Top or Enum.VerticalAlignment.Bottom
+	ToastLayout.HorizontalAlignment = center and Enum.HorizontalAlignment.Center
+		or (left and Enum.HorizontalAlignment.Left or Enum.HorizontalAlignment.Right)
+
+	Onyx.NotificationCorner = corner
+end
+Onyx.NotificationCorner = "bottom-right"
+
+-- ================================================================
+--  UNIBAR ICON
+-- ================================================================
+--
+--  Roblox's own topbar ("unibar") is
+--      CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame.UnibarMenu
+--  where `chat` and `nine_dot` are fixed-size frames sitting edge to edge in
+--  a row. Adding an icon means appending one more frame and widening every
+--  literal-pixel-width ancestor up to UnibarLeftFrame so the pill grows to
+--  cover it. Roblox adds, removes and resizes its own icons whenever it likes,
+--  so the fit is re-measured on a timer rather than computed once.
+--
+--  Everything here is best effort: no unibar (Studio, an older client, a
+--  future rewrite) simply means no icon, and CreateWindow falls back to the
+--  floating button.
+
+local UNIBAR_ATTR = "OnyxUnibarIcon"
+
+-- the Onyx mark: an outlined diamond with a solid core, drawn rather than
+-- loaded so it needs no asset and no font coverage
+local function OnyxMark(parent, size, zIndex)
+	local holder = New("Frame", {
+		Name = "OnyxMark", BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(size, size), ZIndex = zIndex, Parent = parent,
+	})
+
+	local outer = New("Frame", {
+		BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Rotation = 45,
+		Size = UDim2.fromOffset(math.floor(size * 0.68), math.floor(size * 0.68)),
+		ZIndex = zIndex, Parent = holder,
+	})
+	Corner(math.max(2, math.floor(size * 0.16)), outer)
+	local outerStroke = Stroke(outer, Color3.new(1, 1, 1), 0, math.max(1, size * 0.09))
+
+	local core = New("Frame", {
+		BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Rotation = 45,
+		Size = UDim2.fromOffset(math.max(3, math.floor(size * 0.22)), math.max(3, math.floor(size * 0.22))),
+		ZIndex = zIndex + 1, Parent = holder,
+	})
+	Corner(1, core)
+
+	return {
+		Instance = holder,
+		SetSize = function(px)
+			holder.Size = UDim2.fromOffset(px, px)
+			outer.Size  = UDim2.fromOffset(math.floor(px * 0.68), math.floor(px * 0.68))
+			core.Size   = UDim2.fromOffset(math.max(3, math.floor(px * 0.22)), math.max(3, math.floor(px * 0.22)))
+			outerStroke.Thickness = math.max(1, px * 0.09)
+		end,
+		SetTransparency = function(t, info)
+			Tween(outerStroke, { Transparency = t }, info or EASE_SNAP)
+			Tween(core, { BackgroundTransparency = t }, info or EASE_SNAP)
+		end,
+	}
+end
+
+-- returns a table with Exists() once the icon is (or is not) in the unibar
+local function AttachUnibarIcon(Window)
+	local state = { Icon = nil, Dead = false }
+
+	local ok = pcall(function()
+		local MARGIN = 4
+		local widened = {}  -- frame -> original Size, so unload can undo the stretch
+		local mark
+
+		local function isOurs(instance)
+			return instance:GetAttribute(UNIBAR_ATTR) == true
+		end
+
+		local function findRow()
+			local app   = CoreGui:FindFirstChild("TopBarApp")
+			local inner = app and app:FindFirstChild("TopBarApp")
+			local left  = inner and inner:FindFirstChild("UnibarLeftFrame")
+			local menu  = left and left:FindFirstChild("UnibarMenu")
+			if not menu then return nil end
+
+			local sibling = menu:FindFirstChild("chat", true) or menu:FindFirstChild("nine_dot", true)
+			if not sibling or not sibling:IsA("GuiObject") or not sibling.Parent then return nil end
+			return sibling.Parent, sibling, left
+		end
+
+		-- how far right Roblox's own icons reach, ignoring ours
+		local function nativeWidth(row)
+			local edge, rowLeft = 0, row.AbsolutePosition.X
+			for _, child in ipairs(row:GetChildren()) do
+				if child:IsA("GuiObject") and child.Visible and not isOurs(child) and child.AbsoluteSize.X > 0 then
+					local right = (child.AbsolutePosition.X - rowLeft) + child.AbsoluteSize.X
+					if right > edge then edge = right end
+				end
+			end
+			return edge
+		end
+
+		local function widen(frame, width)
+			if frame.Size.X.Scale ~= 0 then return end
+			if frame.AutomaticSize == Enum.AutomaticSize.X or frame.AutomaticSize == Enum.AutomaticSize.XY then
+				return
+			end
+			local size = frame.Size
+			if size.X.Offset == width then return end
+			-- recorded before the first change only, so a later pass never
+			-- captures our own widened value as the original
+			if widened[frame] == nil then widened[frame] = size end
+			frame.Size = UDim2.new(size.X.Scale, width, size.Y.Scale, size.Y.Offset)
+		end
+
+		local function restoreWidths()
+			for frame, size in pairs(widened) do
+				pcall(function()
+					if frame.Parent then frame.Size = size end
+				end)
+			end
+			table.clear(widened)
+		end
+
+		local function fit(row, sibling, left)
+			if state.Dead or not state.Icon then return end
+			local native = nativeWidth(row)
+
+			state.Icon.Size = sibling.Size
+			state.Icon.Position = UDim2.new(
+				0, math.floor(native + 0.5),
+				sibling.Position.Y.Scale, sibling.Position.Y.Offset
+			)
+			if mark then
+				mark.SetSize(math.clamp(math.floor(sibling.AbsoluteSize.Y * 0.42 + 0.5), 12, 22))
+			end
+
+			local target = math.floor(native + state.Icon.Size.X.Offset + MARGIN + 0.5)
+			local node = row
+			while node and node:IsA("GuiObject") do
+				widen(node, target)
+				if node == left then break end
+				node = node.Parent
+			end
+		end
+
+		local function paint(pressed)
+			if not mark then return end
+			if pressed then
+				mark.SetTransparency(0.55)
+			else
+				mark.SetTransparency(Window.Visible and 0 or 0.5)
+			end
+		end
+		state.Paint = paint
+
+		local function build(row, sibling)
+			local icon = New("TextButton", {
+				Name = "onyx", AutoButtonColor = false, Text = "",
+				BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = sibling.ZIndex,
+			})
+			pcall(function() icon.AnchorPoint = sibling.AnchorPoint end)
+			pcall(function() icon.AutoLocalize = false end)
+
+			mark = OnyxMark(icon, 18, sibling.ZIndex + 1)
+
+			-- tagged before parenting, so no measuring pass ever sees it untagged
+			icon:SetAttribute(UNIBAR_ATTR, true)
+			icon.Parent = row
+			state.Icon = icon
+
+			Onyx:Connect(icon.MouseButton1Click, function()
+				Window.Toggle()
+				paint(false)
+			end)
+			Onyx:Connect(icon.InputBegan, function(input)
+				if IsClick(input) then paint(true) end
+			end)
+			Onyx:Connect(icon.InputEnded, function(input)
+				if IsClick(input) then paint(false) end
+			end)
+
+			paint(false)
+		end
+
+		-- an icon left behind by a window that went away without unloading
+		local function sweepStale(row)
+			for _, child in ipairs(row:GetChildren()) do
+				if child ~= state.Icon and isOurs(child) then
+					pcall(function() child:Destroy() end)
+				end
+			end
+		end
+
+		local function refresh()
+			if state.Dead then return end
+			local row, sibling, left = findRow()
+			if not row then return end
+
+			if state.Icon and not state.Icon:IsDescendantOf(game) then
+				state.Icon = nil
+				mark = nil
+			end
+			if not state.Icon then
+				build(row, sibling)
+			elseif state.Icon.Parent ~= row then
+				state.Icon.Parent = row
+			end
+
+			sweepStale(row)
+			fit(row, sibling, left)
+		end
+
+		state.Refresh = refresh
+
+		table.insert(Onyx.Teardown, function()
+			-- order matters: stop the loop, drop the icon, then hand the topbar
+			-- its widths back. Restoring first is undone by a refresh in flight.
+			state.Dead = true
+			if state.Icon then
+				pcall(function() state.Icon:Destroy() end)
+				state.Icon = nil
+			end
+			restoreWidths()
+		end)
+
+		refresh()
+
+		task.spawn(function()
+			while not state.Dead and not Onyx.Unloaded do
+				task.wait(2)
+				if state.Dead or Onyx.Unloaded then return end
+				pcall(refresh)
+			end
+		end)
+	end)
+
+	state.Supported = ok
+	return state
+end
 
 -- ================================================================
 --  WINDOW
@@ -741,11 +1118,16 @@ function Onyx.CreateWindow(a, b)
 			LayoutOrder = order, ZIndex = 6, Parent = actions,
 		})
 		Corner(5, btn)
-		btn.MouseEnter:Connect(function()
-			Tween(btn, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Hover, TextColor3 = Theme.Text }, EASE_SNAP)
-		end)
-		btn.MouseLeave:Connect(function()
-			Tween(btn, { BackgroundTransparency = 1, TextColor3 = Theme.Muted }, EASE_SNAP)
+		Hoverable(btn, function(state)
+			if state == "idle" then
+				Tween(btn, { BackgroundTransparency = 1, TextColor3 = Theme.Muted }, EASE_SNAP)
+			else
+				Tween(btn, {
+					BackgroundTransparency = 0,
+					BackgroundColor3 = state == "press" and Theme.Active or Theme.Hover,
+					TextColor3 = Theme.Text,
+				}, EASE_SNAP)
+			end
 		end)
 		if tip then AttachTooltip(btn, tip) end
 		return btn
@@ -931,6 +1313,7 @@ function Onyx.CreateWindow(a, b)
 		local state = p2
 		if p1 ~= Window then state = p1 end
 		Window.Visible = state and true or false
+		if Window.Unibar and Window.Unibar.Paint then Window.Unibar.Paint(false) end
 		if Window.Visible then
 			Shell.Visible = true
 			Shell.BackgroundTransparency = 1
@@ -947,6 +1330,9 @@ function Onyx.CreateWindow(a, b)
 
 	function Window.Destroy()
 		Window.CloseAllPopouts()
+		Window.Destroyed = true
+		SetFocus(nil)
+		if Window.Unibar then Window.Unibar.Dead = true end
 		Shell:Destroy()
 		for i, w in ipairs(Onyx.Windows) do
 			if w == Window then table.remove(Onyx.Windows, i); break end
@@ -960,6 +1346,12 @@ function Onyx.CreateWindow(a, b)
 	function Window:Dialog(dcfg)
 		dcfg = dcfg or {}
 		local buttons = dcfg.Buttons or dcfg.Options or { { Title = "Okay" } }
+
+		-- the dialog lives inside the window and the window clips: collapsed to
+		-- the topbar there is nowhere for it to show, so expand first
+		Window.CloseAllPopouts()
+		if not Window.Visible then Window.SetVisible(true) end
+		if Window.Minimized then setMinimized(false) end
 
 		local scrim = New("Frame", {
 			Name = "Dialog", BackgroundColor3 = Color3.new(0, 0, 0),
@@ -1013,6 +1405,7 @@ function Onyx.CreateWindow(a, b)
 		local function close()
 			if closed then return end
 			closed = true
+			ClearFocus(scrim)
 			Tween(scrim, { BackgroundTransparency = 1 }, EASE_OUT)
 			Tween(card, { BackgroundTransparency = 1, Size = UDim2.new(0, 320, 0, card.AbsoluteSize.Y) }, EASE_OUT)
 			Tween(cardStroke, { Transparency = 1 }, EASE_OUT)
@@ -1043,6 +1436,7 @@ function Onyx.CreateWindow(a, b)
 		end
 
 		card.Size = UDim2.new(0, 300, 0, 0)
+		SetFocus(scrim)
 		Tween(scrim, { BackgroundTransparency = 0.45 }, EASE_OUT)
 		Tween(card, { BackgroundTransparency = 0, Size = UDim2.new(0, 320, 0, 0) }, EASE_SMOOTH)
 		Tween(cardStroke, { Transparency = 0 }, EASE_SMOOTH)
@@ -1090,7 +1484,12 @@ function Onyx.CreateWindow(a, b)
 		Window.ToggleKey = key
 	end
 
-	if UserInputService.TouchEnabled and cfg.MobileButton ~= false then
+	-- Visibility control. The unibar icon is the primary one; the floating
+	-- button is a fallback for clients with no unibar to attach to, so by
+	-- default it only appears if the icon never lands.
+	local function buildFloatingButton()
+		if Window.MobileButton then return end
+
 		local fab = New("TextButton", {
 			Name = "Toggle", BackgroundColor3 = Theme.Surface, AutoButtonColor = false,
 			Text = "", Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(42, 42),
@@ -1098,22 +1497,13 @@ function Onyx.CreateWindow(a, b)
 		})
 		Corner(21, fab)
 		Stroke(fab, Theme.LineBright, 0.3)
-		local fabDot = New("Frame", {
-			BackgroundColor3 = Theme.Accent, BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(10, 10), ZIndex = 31, Parent = fab,
-		})
-		Corner(5, fabDot)
-		BindAccent(fabDot, "BackgroundColor3")
+		OnyxMark(fab, 18, 31)
 
-		-- a tap toggles, a drag repositions: only treat real movement as a drag
+		-- a tap toggles, a drag repositions: only real movement counts as a drag
 		local pressStart, moved = nil, false
 		Draggable(fab, fab, function() moved = false end)
 		fab.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.Touch
-				or input.UserInputType == Enum.UserInputType.MouseButton1 then
-				pressStart, moved = input.Position, false
-			end
+			if IsClick(input) then pressStart, moved = input.Position, false end
 		end)
 		fab.InputChanged:Connect(function(input)
 			if not pressStart then return end
@@ -1128,6 +1518,21 @@ function Onyx.CreateWindow(a, b)
 			Window.Toggle()
 		end)
 		Window.MobileButton = fab
+	end
+
+	local unibar = cfg.UnibarIcon ~= false and AttachUnibarIcon(Window) or nil
+	Window.Unibar = unibar
+
+	if cfg.MobileButton == true then
+		buildFloatingButton()
+	elseif cfg.MobileButton ~= false then
+		-- give the unibar a few seconds to exist (it streams in on join), then
+		-- fall back so the interface is never unreachable without a keyboard
+		task.delay(5, function()
+			if Window.Destroyed or Onyx.Unloaded then return end
+			if unibar and unibar.Icon then return end
+			buildFloatingButton()
+		end)
 	end
 
 	----------------------------------------------------------------
@@ -1240,15 +1645,18 @@ function Onyx.CreateWindow(a, b)
 		Tab.IconIsImage = iconAsset ~= nil
 
 		btn.MouseButton1Click:Connect(Tab.Select)
-		btn.MouseEnter:Connect(function()
+		Hoverable(btn, function(state)
 			if Window.ActiveTab == Tab then return end
-			Tween(btn, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Hover }, EASE_SNAP)
-			Tween(label, { TextColor3 = Theme.Text }, EASE_SNAP)
-		end)
-		btn.MouseLeave:Connect(function()
-			if Window.ActiveTab == Tab then return end
-			Tween(btn, { BackgroundTransparency = 1 }, EASE_SNAP)
-			Tween(label, { TextColor3 = Theme.SubText }, EASE_SNAP)
+			if state == "idle" then
+				Tween(btn, { BackgroundTransparency = 1 }, EASE_SNAP)
+				Tween(label, { TextColor3 = Theme.SubText }, EASE_SNAP)
+			else
+				Tween(btn, {
+					BackgroundTransparency = 0,
+					BackgroundColor3 = state == "press" and Theme.Active or Theme.Hover,
+				}, EASE_SNAP)
+				Tween(label, { TextColor3 = Theme.Text }, EASE_SNAP)
+			end
 		end)
 
 		function Tab.SetTitle(a, newTitle)
@@ -1741,10 +2149,11 @@ function ElementAPI(holder, parent, Window)
 		end
 
 		local lane = New("Frame", {
-			BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14), ZIndex = 7, Parent = row,
+			Name = "Lane", BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 14), ZIndex = 7, Parent = row,
 		})
 		local track = New("Frame", {
-			BackgroundColor3 = Theme.SurfaceAlt, BorderSizePixel = 0,
+			Name = "Track", BackgroundColor3 = Theme.SurfaceAlt, BorderSizePixel = 0,
 			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
 			Size = UDim2.new(1, 0, 0, 4), ZIndex = 7, Parent = lane,
 		})
@@ -1806,6 +2215,7 @@ function ElementAPI(holder, parent, Window)
 		api.SetVisible = function(a, v) row.Visible = (typeof(a) == "boolean" and a or v) and true or false end
 		api.Destroy = function()
 			if api.Flag then Onyx.Options[api.Flag] = nil end
+			ClearFocus(api)
 			row:Destroy()
 		end
 
@@ -1826,13 +2236,16 @@ function ElementAPI(holder, parent, Window)
 		end
 
 		local hit = New("TextButton", {
-			BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+			Name = "Hit", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
 			Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = lane,
 		})
 		hit.InputBegan:Connect(function(input)
 			if input.UserInputType ~= Enum.UserInputType.MouseButton1
 				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			-- another slider is mid-drag, or a popout is open: not ours to take
+			if FocusBlocked(api) then return end
 			dragging = true
+			SetFocus(api)
 			Tween(knob, { Size = UDim2.fromOffset(14, 14) }, EASE_SNAP)
 			apply(input.Position.X)
 		end)
@@ -1847,6 +2260,7 @@ function ElementAPI(holder, parent, Window)
 			if input.UserInputType ~= Enum.UserInputType.MouseButton1
 				and input.UserInputType ~= Enum.UserInputType.Touch then return end
 			dragging = false
+			ClearFocus(api)
 			Tween(knob, { Size = UDim2.fromOffset(10, 10) }, EASE_SNAP)
 		end)
 
@@ -2116,6 +2530,7 @@ function ElementAPI(holder, parent, Window)
 		local function close()
 			if not isOpen then return end
 			isOpen = false
+			ClearFocus(panel)
 			Tween(panel, { BackgroundTransparency = 1, Size = UDim2.fromOffset(panel.Size.X.Offset, math.max(0, height - 10)) }, EASE_OUT)
 			Tween(panelStroke, { Transparency = 1 }, EASE_OUT)
 			task.delay(0.2, function()
@@ -2131,6 +2546,8 @@ function ElementAPI(holder, parent, Window)
 			if isOpen then return end
 			Window.CloseAllPopouts(close)
 			isOpen = true
+			-- the panel, not the row that owns it: the row should go flat too
+			SetFocus(panel)
 			height = opts.GetHeight and opts.GetHeight() or height
 			panel.Size = UDim2.fromOffset(panel.Size.X.Offset, math.max(0, height - 10))
 			reposition()
@@ -3013,6 +3430,14 @@ end
 function Onyx.Unload()
 	if Onyx.Unloaded then return end
 	Onyx.Unloaded = true
+	Onyx.Focus = nil
+
+	-- teardown first: the unibar icon lives in CoreGui and has to put the
+	-- topbar's widths back, which destroying our own ScreenGui will not do
+	for _, fn in ipairs(Onyx.Teardown) do
+		pcall(fn)
+	end
+	table.clear(Onyx.Teardown)
 
 	for _, conn in ipairs(Onyx.Connections) do
 		pcall(function() conn:Disconnect() end)
