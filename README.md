@@ -78,7 +78,7 @@ hide instead, or a function to run your own teardown first.
 ```lua
 local Tab = Window:CreateTab({
     Title    = "Visuals",
-    Icon     = "rbxassetid://10723407389",  -- asset id, or any glyph like "\u{25C6}"
+    Icon     = "rbxassetid://10723407389",  -- asset id, or a single character
     Default  = true,                         -- select this tab on open
     OnSelect = function() end,
 })
@@ -87,8 +87,9 @@ local Section = Tab:CreateSection("ESP")
 ```
 
 `Icon` accepts a numeric asset id, an `rbxassetid://` string, or a single
-character/emoji which is drawn as text. Elements can be added to a tab
-directly or to a section — both expose the same constructors.
+character drawn as text — note that Roblox's Gotham font has no glyphs for most
+geometric shapes, so an asset id is the reliable choice. Elements can be added
+to a tab directly or to a section; both expose the same constructors.
 
 ---
 

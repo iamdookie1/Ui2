@@ -19,10 +19,12 @@ Onyx:Watermark({ Text = "Onyx", ShowFPS = true })
 --------------------------------------------------------------------
 -- Main
 --------------------------------------------------------------------
-local Main    = Window:CreateTab({ Title = "Main",     Icon = "\u{25C6}" })
-local Visuals = Window:CreateTab({ Title = "Visuals",  Icon = "\u{25C9}" })
-local Player  = Window:CreateTab({ Title = "Player",   Icon = "\u{25B2}" })
-local Config  = Window:CreateTab({ Title = "Config",   Icon = "\u{2699}" })
+-- Icon accepts an asset id ("rbxassetid://123", or the number), or any single
+-- character to draw as text. Left off here so the demo has nothing to load.
+local Main    = Window:CreateTab({ Title = "Main" })
+local Visuals = Window:CreateTab({ Title = "Visuals" })
+local Player  = Window:CreateTab({ Title = "Player" })
+local Config  = Window:CreateTab({ Title = "Config" })
 
 local Combat = Main:CreateSection("Combat")
 

@@ -176,6 +176,48 @@ local function Text(props)
 	return New("TextLabel", p)
 end
 
+-- Gotham has no dependable arrow glyph, so chevrons are drawn from two bars.
+-- Rotating the holder rotates the whole shape: 0 points down, -90 points right.
+local function Chevron(props)
+	local size = props.Size or 10
+	local thickness = props.Thickness or 1.5
+
+	local holder = New("Frame", {
+		Name        = "Chevron",
+		BackgroundTransparency = 1,
+		AnchorPoint = props.AnchorPoint,
+		Position    = props.Position,
+		Rotation    = props.Rotation or 0,
+		Size        = UDim2.fromOffset(size, size),
+		ZIndex      = props.ZIndex or 1,
+		Parent      = props.Parent,
+	})
+
+	local bars = {}
+	for i = 1, 2 do
+		bars[i] = New("Frame", {
+			BackgroundColor3 = props.Color or Theme.Muted,
+			BorderSizePixel  = 0,
+			AnchorPoint      = Vector2.new(0.5, 0.5),
+			Position         = UDim2.fromScale(i == 1 and 0.28 or 0.72, 0.53),
+			Size             = UDim2.fromOffset(math.floor(size * 0.6 + 0.5), thickness),
+			Rotation         = i == 1 and 38 or -38,
+			ZIndex           = (props.ZIndex or 1) + 1,
+			Parent           = holder,
+		})
+		Corner(1, bars[i])
+	end
+
+	return {
+		Instance = holder,
+		SetColor = function(color, info)
+			for _, bar in ipairs(bars) do
+				Tween(bar, { BackgroundColor3 = color }, info)
+			end
+		end,
+	}
+end
+
 local function Clamp(v, min, max)
 	if v < min then return min end
 	if v > max then return max end
@@ -710,7 +752,7 @@ function Onyx.CreateWindow(a, b)
 	end
 
 	local minimizeBtn = TopButton("\u{2013}", 1, "Minimize")
-	local closeBtn    = TopButton("\u{2715}", 2, "Unload interface")
+	local closeBtn    = TopButton("\u{00D7}", 2, "Unload interface")
 
 	----------------------------------------------------------------
 	-- body : rail + content
@@ -870,7 +912,7 @@ function Onyx.CreateWindow(a, b)
 		if state then
 			restoreSize = Shell.Size
 			Body.Visible = false
-			minimizeBtn.Text = "\u{25A1}"
+			minimizeBtn.Text = "+"
 			Tween(Shell, { Size = UDim2.new(restoreSize.X.Scale, restoreSize.X.Offset, 0, 38) }, EASE_SMOOTH)
 		else
 			minimizeBtn.Text = "\u{2013}"
@@ -1064,14 +1106,26 @@ function Onyx.CreateWindow(a, b)
 		Corner(5, fabDot)
 		BindAccent(fabDot, "BackgroundColor3")
 
-		local moved = false
+		-- a tap toggles, a drag repositions: only treat real movement as a drag
+		local pressStart, moved = nil, false
 		Draggable(fab, fab, function() moved = false end)
-		fab.InputChanged:Connect(function(i)
-			if i.UserInputType == Enum.UserInputType.Touch then moved = true end
+		fab.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch
+				or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				pressStart, moved = input.Position, false
+			end
+		end)
+		fab.InputChanged:Connect(function(input)
+			if not pressStart then return end
+			if input.UserInputType ~= Enum.UserInputType.Touch
+				and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+			local delta = input.Position - pressStart
+			if math.abs(delta.X) + math.abs(delta.Y) > 8 then moved = true end
 		end)
 		fab.MouseButton1Click:Connect(function()
+			pressStart = nil
 			if moved then moved = false; return end
-			Window:Toggle()
+			Window.Toggle()
 		end)
 		Window.MobileButton = fab
 	end
@@ -1520,13 +1574,12 @@ function ElementAPI(holder, parent, Window)
 		})
 		Interact(base.Row, Theme.Surface, Theme.Hover, Theme.Active)
 
-		local chevron = Text({
-			Parent = base.Slot, ZIndex = 8, Font = FONT_M, TextSize = 13,
-			Text = "\u{203A}", TextColor3 = Theme.Muted,
-			TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.fromScale(1, 1),
+		local chevron = Chevron({
+			Parent = base.Slot, ZIndex = 8, Size = 10, Rotation = -90,
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
 		})
-		base.Row.MouseEnter:Connect(function() Tween(chevron, { TextColor3 = Theme.Text }, EASE_SNAP) end)
-		base.Row.MouseLeave:Connect(function() Tween(chevron, { TextColor3 = Theme.Muted }, EASE_SNAP) end)
+		base.Row.MouseEnter:Connect(function() chevron.SetColor(Theme.Text, EASE_SNAP) end)
+		base.Row.MouseLeave:Connect(function() chevron.SetColor(Theme.Muted, EASE_SNAP) end)
 		AttachTooltip(base.Row, cfg.Tooltip)
 
 		local api = { Instance = base.Row, Type = "Button", Callback = cfg.Callback }
@@ -2147,12 +2200,9 @@ function ElementAPI(holder, parent, Window)
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -26, 1, 0),
 		})
-		local arrow = Text({
-			Parent = control, ZIndex = 9, Font = FONT_M, TextSize = 11,
-			Text = "\u{25BE}", TextColor3 = Theme.Muted,
-			TextXAlignment = Enum.TextXAlignment.Center,
+		local arrow = Chevron({
+			Parent = control, ZIndex = 9, Size = 10,
 			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
-			Size = UDim2.fromOffset(10, 10),
 		})
 
 		local api = {
@@ -2295,13 +2345,15 @@ function ElementAPI(holder, parent, Window)
 			Height = panelHeight(),
 			GetHeight = panelHeight,
 			OnOpen = function()
-				Tween(arrow, { Rotation = 180, TextColor3 = Theme.Text }, EASE_OUT)
+				Tween(arrow.Instance, { Rotation = 180 }, EASE_OUT)
+				arrow.SetColor(Theme.Text, EASE_OUT)
 				Tween(controlStroke, { Color = Theme.Accent, Transparency = 0.25 }, EASE_SNAP)
 				if searchBox then searchBox.Text = "" end
 				buildRows(nil)
 			end,
 			OnClose = function()
-				Tween(arrow, { Rotation = 0, TextColor3 = Theme.Muted }, EASE_OUT)
+				Tween(arrow.Instance, { Rotation = 0 }, EASE_OUT)
+				arrow.SetColor(Theme.Muted, EASE_OUT)
 				Tween(controlStroke, { Color = Theme.LineBright, Transparency = 0 }, EASE_SNAP)
 			end,
 		})
@@ -2751,7 +2803,7 @@ function Onyx.Watermark(a, b)
 			frames = frames + 1
 			local now = os.clock()
 			if now - clock >= 0.5 then
-				label.Text = base .. "  \u{2502}  " .. math.floor(frames / (now - clock)) .. " fps"
+				label.Text = base .. "  |  " .. math.floor(frames / (now - clock)) .. " fps"
 				frames, clock = 0, now
 			end
 		end)
