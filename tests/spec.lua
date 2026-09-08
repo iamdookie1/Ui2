@@ -1,0 +1,262 @@
+-- exercised against the mock environment
+local ok, Onyx = pcall(LoadOnyx)
+assert(ok, "library failed to load: " .. tostring(Onyx))
+print("loaded " .. Onyx.Name .. " v" .. Onyx.Version)
+
+local fired = {}
+local function note(k, v) fired[k] = v end
+
+local Window = Onyx:CreateWindow({
+	Title = "Onyx Demo", SubTitle = "v1.0.0",
+	Size = UDim2.fromOffset(640, 440), Keybind = Enum.KeyCode.RightShift,
+})
+assert(Window and Window.Frame, "no window frame")
+
+local Main = Window:CreateTab({ Title = "Main", Icon = "rbxassetid://10723407389" })
+local Visuals = Window:CreateTab({ Title = "Visuals", Icon = "\u{25C6}" })
+local Settings = Window:CreateTab("Settings")
+assert(#Window.Tabs == 3, "expected 3 tabs")
+assert(Window.ActiveTab == Main, "first tab should auto-select")
+
+local Combat = Main:CreateSection("Combat")
+local Misc   = Main:CreateSection("Misc")
+
+Combat:Label("A plain label")
+Combat:Paragraph({ Title = "Heads up", Content = "Paragraphs wrap across lines." })
+local capLine = Combat:Divider("or")
+local plainLine = Combat:Divider()
+capLine:SetVisible(false)
+assert(capLine.Instance.Visible == false, "divider SetVisible failed")
+capLine:SetVisible(true)
+plainLine:SetVisible(true)
+local para = Combat:Paragraph({ Title = "P", Content = "C" })
+para:SetVisible(false)
+assert(para.Instance.Visible == false, "paragraph SetVisible failed")
+para:SetVisible(true)
+para:SetTitle("P2")
+para:SetContent("C2")
+
+local btnHits = 0
+local btn = Combat:Button({ Title = "Kill All", Description = "Removes every NPC",
+	Callback = function() btnHits = btnHits + 1 end })
+btn.Instance.MouseButton1Click:Fire()
+assert(btnHits == 1, "button callback did not fire")
+btn:SetTitle("Kill Everything")
+
+local confirmBtn = Combat:Button({ Title = "Reset", Confirm = true, Callback = function() note("confirmed", true) end })
+confirmBtn.Instance.MouseButton1Click:Fire()
+assert(fired.confirmed == nil, "confirm should not fire immediately")
+-- the dialog's primary button must run the callback
+local confirmRow
+for _, inst in ipairs(MOCK.allInstances) do
+	if inst.ClassName == "TextButton" and inst.Text == "Confirm" then confirmRow = inst end
+end
+assert(confirmRow, "confirm dialog was not built")
+confirmRow.MouseButton1Click:Fire()
+assert(fired.confirmed == true, "confirm dialog did not run the callback")
+MOCK.step(0.5)
+
+local tog = Combat:Toggle({ Title = "Aimbot", Flag = "aimbot", Default = false,
+	Callback = function(v) note("aimbot", v) end })
+tog:Set(true)
+assert(tog:Get() == true and Onyx.Flags.aimbot == true, "toggle flag not stored")
+assert(fired.aimbot == true, "toggle callback missing")
+tog.Instance.MouseButton1Click:Fire()
+assert(tog:Get() == false, "row click should toggle")
+
+local sld = Combat:Slider({ Title = "FOV", Min = 0, Max = 360, Default = 90, Increment = 1,
+	Suffix = "\u{00B0}", Flag = "fov", Callback = function(v) note("fov", v) end })
+assert(sld:Get() == 90, "slider default wrong")
+sld:Set(400)
+assert(sld:Get() == 360, "slider should clamp to max")
+sld:Set(-10)
+assert(sld:Get() == 0, "slider should clamp to min")
+sld:SetRange(0, 100)
+sld:Set(33.7)
+assert(sld:Get() == 34, "slider increment rounding wrong: " .. tostring(sld:Get()))
+assert(Onyx.Flags.fov == 34, "slider flag not synced")
+
+local dec = Combat:Slider({ Title = "Smoothness", Min = 0, Max = 1, Default = 0.5, Increment = 0.05 })
+dec:Set(0.37)
+assert(math.abs(dec:Get() - 0.35) < 1e-6, "decimal slider rounding wrong: " .. tostring(dec:Get()))
+
+local dd = Misc:Dropdown({ Title = "Target Part", Values = { "Head", "Torso", "Legs" },
+	Default = "Head", Flag = "part", Search = true, Callback = function(v) note("part", v) end })
+assert(dd:Get() == "Head", "dropdown default wrong")
+dd:Set("Torso")
+assert(dd:Get() == "Torso" and Onyx.Flags.part == "Torso", "dropdown set failed")
+dd:SetValues({ "Head", "Legs" })
+assert(dd:Get() == nil, "dropdown should clear a value that no longer exists")
+dd:Set("Legs")
+assert(dd:Get() == "Legs")
+
+local md = Misc:Dropdown({ Title = "ESP Parts", Multi = true, Values = { "Box", "Name", "Health" },
+	Default = { "Box", "Health" }, Flag = "esp" })
+assert(#md:Get() == 2, "multi dropdown default wrong")
+md:Set({ "Name" })
+assert(#md:Get() == 1 and md:Get()[1] == "Name", "multi dropdown set failed")
+
+local inp = Misc:Input({ Title = "Webhook", Placeholder = "https://", Default = "abc",
+	Flag = "hook", Callback = function(v) note("hook", v) end })
+assert(inp:Get() == "abc")
+inp:Set("hello")
+assert(inp:Get() == "hello" and Onyx.Flags.hook == "hello", "input flag not synced")
+
+local kb = Misc:Keybind({ Title = "Panic", Default = Enum.KeyCode.P, Mode = "Toggle",
+	Flag = "panic", Callback = function(v) note("panic", v) end })
+assert(kb:Get() == Enum.KeyCode.P, "keybind default wrong")
+
+local cp = Visuals:Colorpicker({ Title = "Box Colour", Default = Color3.fromRGB(255, 0, 0),
+	Flag = "boxcolor", Callback = function(c) note("boxcolor", c) end })
+assert(cp:Get().R == 1 and cp:Get().G == 0, "colorpicker default wrong")
+cp:Set(Color3.fromRGB(0, 128, 255))
+local c = cp:Get()
+assert(math.abs(c.B - 1) < 0.01, "colorpicker set failed")
+cp:Set("#00FF00")
+assert(math.abs(cp:Get().G - 1) < 0.02, "hex set failed")
+
+local cpa = Visuals:Colorpicker({ Title = "Fill", Default = Color3.new(1, 1, 1), Transparency = 0.5 })
+assert(cpa.Transparency == 0.5, "alpha not stored")
+
+-- popouts: open the dropdown and pick an option through the UI
+dd.Instance.MouseButton1Click:Fire()
+MOCK.step(0.5)
+local optionRow
+for _, inst in ipairs(MOCK.allInstances) do
+	if inst.Name == "Legs" and inst.ClassName == "TextButton" then optionRow = inst end
+end
+assert(optionRow, "dropdown option row was not built")
+optionRow.MouseButton1Click:Fire()
+assert(dd:Get() == "Legs", "selecting an option through the UI failed")
+
+-- keybind listening flow
+kb.Instance.MouseButton1Click:Fire()
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.K }, false)
+assert(kb:Get() == Enum.KeyCode.K, "keybind rebind failed")
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.K }, false)
+assert(fired.panic == true, "keybind toggle callback failed")
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.K }, false)
+assert(fired.panic == false, "keybind toggle should flip back")
+
+-- tab switching
+Visuals.Select()
+assert(Window.ActiveTab == Visuals, "tab select failed")
+Window:SelectTab(1)
+assert(Window.ActiveTab == Main, "SelectTab by index failed")
+
+-- window visibility + toggle key
+Window:Toggle()
+assert(Window.Visible == false, "toggle should hide")
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.RightShift }, false)
+assert(Window.Visible == true, "toggle keybind failed")
+
+-- minimize
+Window:Minimize(true)
+assert(Window.Minimized == true)
+Window:Minimize(false)
+MOCK.step(0.5)
+assert(Window.Minimized == false)
+
+-- notifications
+local toast = Onyx:Notify({ Title = "Loaded", Content = "Everything is fine.", Duration = 1, Type = "success" })
+assert(toast and toast.Instance, "notification failed")
+Onyx:Notify("Short form")
+MOCK.step(2)
+
+-- dialog
+local dlg = Window:Dialog({ Title = "Confirm", Content = "Do it?", Buttons = {
+	{ Title = "No" }, { Title = "Yes", Primary = true, Callback = function() note("dialog", true) end },
+} })
+assert(dlg and dlg.Close, "dialog failed")
+dlg.Close()
+MOCK.step(0.5)
+
+-- watermark
+local wm = Onyx:Watermark({ Text = "Onyx", ShowFPS = true })
+RunService = game:GetService("RunService")
+for _ = 1, 3 do RunService.RenderStepped:Fire() end
+wm:SetText("Onyx | test")
+
+-- config round trip
+tog:Set(true)
+sld:Set(72)
+inp:Set("saved-value")
+md:Set({ "Box", "Name" })
+local savedOk, savedErr = Onyx:SaveConfig("test")
+assert(savedOk, "SaveConfig failed: " .. tostring(savedErr))
+
+tog:Set(false); sld:Set(1); inp:Set("wiped"); md:Set({})
+local loadedOk, loadErr = Onyx:LoadConfig("test")
+assert(loadedOk, "LoadConfig failed: " .. tostring(loadErr))
+assert(tog:Get() == true, "config did not restore toggle")
+assert(sld:Get() == 72, "config did not restore slider, got " .. tostring(sld:Get()))
+assert(inp:Get() == "saved-value", "config did not restore input")
+assert(#md:Get() == 2, "config did not restore multi dropdown")
+assert(Onyx.Flags.panic == Enum.KeyCode.K, "config did not restore keybind")
+assert(typeof(Onyx.Flags.boxcolor) == "Color3", "config did not restore colour")
+
+local list = Onyx:ListConfigs()
+assert(#list == 1 and list[1] == "test", "ListConfigs wrong")
+
+-- flag helpers
+Onyx:SetFlag("aimbot", false)
+assert(Onyx:GetFlag("aimbot") == false, "SetFlag/GetFlag failed")
+assert(Onyx:GetOption("aimbot") == tog, "GetOption failed")
+
+-- accent recolour
+Onyx:SetAccent(Color3.fromRGB(120, 90, 255))
+assert(Onyx.Theme.Accent.B > 0.9, "accent not applied")
+
+-- element removal
+local temp = Misc:Button({ Title = "temp" })
+temp:Destroy()
+local tempSlider = Misc:Slider({ Title = "temp", Flag = "tempflag" })
+tempSlider:Destroy()
+assert(Onyx.Options.tempflag == nil, "destroy did not unregister the flag")
+
+-- dropdown search filtering
+local searchBox
+for _, inst in ipairs(MOCK.allInstances) do
+	if inst.ClassName == "TextBox" and inst.PlaceholderText == "Search" then searchBox = inst end
+end
+assert(searchBox, "search box was not created")
+local optionsFrame = searchBox.Parent.Parent:FindFirstChild("Options")
+assert(optionsFrame, "options list missing from the search dropdown")
+local function countRows()
+	local n = 0
+	for _, c in ipairs(optionsFrame:GetChildren()) do
+		if c.ClassName == "TextButton" then n = n + 1 end
+	end
+	return n
+end
+assert(countRows() == 2, "unfiltered list should show both options, got " .. countRows())
+searchBox.Text = "leg"
+assert(countRows() == 1, "search filter should leave one row, got " .. countRows())
+searchBox.Text = ""
+assert(countRows() == 2, "clearing the search should restore both rows")
+
+Settings:Button({ Title = "Unload", Callback = function() end })
+
+MOCK.step(3)
+
+if MOCK.errors and #MOCK.errors > 0 then
+	for _, e in ipairs(MOCK.errors) do print("RUNTIME ERROR: " .. e) end
+	error(#MOCK.errors .. " runtime error(s) captured")
+end
+
+print("instances created: " .. #MOCK.allInstances)
+
+-- teardown
+Onyx:Unload()
+assert(Onyx.Unloaded == true, "unload flag not set")
+assert(#Onyx.Windows == 0, "windows not cleared")
+assert(Onyx.Root.Destroyed == true, "root screengui not destroyed")
+-- input events must no longer reach dead handlers
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.K }, false)
+MOCK.step(1)
+if MOCK.errors and #MOCK.errors > 0 then
+	for _, e in ipairs(MOCK.errors) do print("POST-UNLOAD ERROR: " .. e) end
+	error("errors after unload")
+end
+
+print("ALL TESTS PASSED")
