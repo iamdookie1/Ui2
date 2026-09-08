@@ -88,6 +88,24 @@ Targeting:Paragraph({
 	Content = "Targets are scored by distance to your crosshair first and world distance second. Anything in the ignore list is skipped before scoring.",
 })
 
+-- text that keeps itself current: pass a function instead of a string
+Targeting:Label({
+	Title = function()
+		return "Players in server: " .. #game:GetService("Players"):GetPlayers()
+	end,
+})
+
+Targeting:Paragraph({
+	Title    = "Live status",
+	Content  = function()
+		return string.format("Aim FOV %d\u{00B0}  ·  hit part %s  ·  smoothing %.2f",
+			Onyx.Flags.AimFOV or 0,
+			tostring(Onyx.Flags.HitPart),
+			Onyx.Flags.AimSmoothing or 0)
+	end,
+	Interval = 0.2,
+})
+
 Targeting:Button({
 	Title       = "Rebuild target cache",
 	Description = "Rescans every player in the server.",
@@ -204,6 +222,29 @@ Interface:Dropdown({
 	Default  = "bottom-right",
 	Callback = function(corner) Onyx:SetNotificationCorner(corner) end,
 })
+
+local Log = Config:CreateSection("Console")
+
+local console = Log:Console({
+	Title       = "Output",
+	Height      = 150,
+	MaxLines    = 100,
+	Placeholder = "Nothing logged yet.",
+	Lines       = { "Onyx " .. Onyx.Version .. " ready." },
+})
+
+Log:Button({ Title = "Log a line",  Callback = function() console:Log("plain line at", os.date("%X")) end })
+Log:Button({ Title = "Log a batch", Callback = function()
+	console:Info("scanning players")
+	console:Success("3 targets resolved")
+	console:Warn("2 ignored by filter")
+	console:Error("1 failed to resolve")
+end })
+
+-- every element callback can report into the console
+Onyx:GetOption("SilentAim").Callback = function(state)
+	console:Info("silent aim " .. (state and "on" or "off"))
+end
 
 local Toasts = Config:CreateSection("Notifications")
 

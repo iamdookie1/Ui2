@@ -122,7 +122,12 @@ NumberSequence = { new = function(a) return tag({ Keypoints = a }, "NumberSequen
 ColorSequenceKeypoint = { new = function(t, v) return tag({ Time = t, Value = v }, "ColorSequenceKeypoint") end }
 ColorSequence = { new = function(a) return tag({ Keypoints = a }, "ColorSequence") end }
 TweenInfo = { new = function(...) return tag({ ... }, "TweenInfo") end }
-Rect = { new = function(...) return tag({ ... }, "Rect") end }
+Rect = { new = function(x0, y0, x1, y1)
+	return tag({
+		Min = vec2(x0, y0), Max = vec2(x1, y1),
+		Width = (x1 or 0) - (x0 or 0), Height = (y1 or 0) - (y0 or 0),
+	}, "Rect")
+end }
 
 --------------------------------------------------------------------
 -- Enum (auto-vivifying)
@@ -167,6 +172,10 @@ local DEFAULTS = {
 	AbsolutePosition = function() return vec2(0, 0) end,
 	AbsoluteSize     = function() return vec2(200, 200) end,
 	TextBounds       = function() return vec2(40, 12) end,
+	AbsoluteCanvasSize = function() return vec2(0, 0) end,
+	AbsoluteContentSize = function() return vec2(0, 0) end,
+	AbsoluteWindowSize = function() return vec2(200, 200) end,
+	CanvasPosition     = function() return vec2(0, 0) end,
 	Text             = function() return "" end,
 	Name             = function() return "Instance" end,
 	Visible          = function() return true end,
@@ -390,6 +399,7 @@ LocalPlayer.UserId = 1
 Instance.new("PlayerGui", LocalPlayer)
 Players.LocalPlayer = LocalPlayer
 Players._methods.GetUserThumbnailAsync = function() return "rbxassetid://0" end
+Players._methods.GetPlayers = function() return { LocalPlayer } end
 
 -- tiny JSON codec
 local function jsonEncode(value)
@@ -491,7 +501,10 @@ HttpService._methods.JSONEncode = function(_, v) return jsonEncode(v) end
 HttpService._methods.JSONDecode = function(_, v) return jsonDecode(v) end
 
 service("CoreGui")
-service("GuiService")
+
+local Gui = service("GuiService")
+Gui.TopbarInset = Rect.new(0, 0, 0, 44)
+Gui._methods.GetGuiInset = function() return vec2(0, 36), vec2(0, 0) end
 service("TextService")
 
 game = Instance.new("DataModel")

@@ -252,7 +252,41 @@ local color, alpha = picker:Get()
 
 With alpha enabled the transparency is stored under `Flag .. "_Transparency"`.
 
-### Static elements
+### Console
+
+A scrolling log pane with levelled output, a ring buffer, and copy/clear
+actions in its header.
+
+```lua
+local console = Section:Console({
+    Title       = "Output",
+    Height      = 148,          -- pixel height of the log area
+    MaxLines    = 200,          -- oldest lines are dropped past this
+    Timestamps  = true,
+    AutoScroll  = true,
+    Placeholder = "No output yet.",
+    Copy        = true,         -- COPY action in the header
+    Clear       = true,         -- CLEAR action in the header
+    Lines       = { "ready" },  -- seed content
+})
+
+console:Log("connected to", server.Name)   -- arguments join like print
+console:Info("scanning")
+console:Success("done")
+console:Warn("rate limited")
+console:Error("request failed")
+
+console:Clear()
+console:GetText()          -- every surviving line, newline separated
+console:Copy()             -- uses setclipboard; false if unavailable
+console:SetHeight(220)
+console:SetAutoScroll(false)
+```
+
+Auto-scroll sticks to the newest line only while you are already at the
+bottom, so scrolling up to read something is not yanked back by the next line.
+
+### Text, static or live
 
 ```lua
 Section:Label("Plain text")
@@ -260,6 +294,36 @@ Section:Paragraph({ Title = "Heads up", Content = "Wraps across lines." })
 Section:Divider()          -- hairline
 Section:Divider("or")      -- hairline with a centred caption
 ```
+
+Both take a function instead of a string for text that keeps itself current.
+It is polled on an interval (0.1s by default) and only written when the value
+actually changes, so a live label costs close to nothing:
+
+```lua
+Section:Label({ Title = function() return "Ping: " .. ping .. "ms" end })
+
+Section:Paragraph({
+    Title    = "Session",
+    Content  = function() return #targets .. " targets tracked" end,
+    Interval = 0.25,
+})
+```
+
+Either can be swapped at runtime, in both directions:
+
+```lua
+local label = Section:Label("Idle")
+
+label:SetText("Running")                          -- back to a fixed string
+label:SetText(function() return os.date("%X") end)  -- or bind to a value
+label:Bind(function() return tostring(count) end, 0.5)
+label:Unbind()
+label:SetColor(Color3.fromRGB(240, 120, 120))
+```
+
+Paragraphs bind each half separately with `:BindTitle(fn)` and
+`:BindContent(fn)`; `:SetTitle` / `:SetContent` accept a string or a function
+and rebind accordingly. Binding stops when the element is destroyed.
 
 ---
 
@@ -308,7 +372,13 @@ Window:Dialog({
 ```lua
 local mark = Onyx:Watermark({ Text = "Onyx", ShowFPS = true, Draggable = true })
 mark:SetText("Onyx | lobby")
+mark:SetPosition(UDim2.fromOffset(20, 90))
 ```
+
+It spawns below Roblox's own topbar rather than behind it, tracking
+`GuiService.TopbarInset` so it stays clear when the unibar resizes. Dragging
+it, passing an explicit `Position`, or calling `:SetPosition` pins it — after
+that it stops following the inset.
 
 ---
 

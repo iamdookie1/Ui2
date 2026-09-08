@@ -32,6 +32,7 @@ local UserInputService  = CloneRef(game:GetService("UserInputService"))
 local RunService       = CloneRef(game:GetService("RunService"))
 local HttpService      = CloneRef(game:GetService("HttpService"))
 local CoreGui          = CloneRef(game:GetService("CoreGui"))
+local GuiService       = CloneRef(game:GetService("GuiService"))
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -242,6 +243,57 @@ end
 local function BindAccent(obj, prop)
 	table.insert(Onyx.AccentBound, { obj, prop })
 	return obj
+end
+
+-- Height of Roblox's own topbar, so nothing we place is hidden behind it.
+-- TopbarInset tracks the real unibar; GetGuiInset is the older, coarser
+-- number. Take whichever is larger, and fall back to the usual 36.
+local function TopInset()
+	local best = 0
+	pcall(function()
+		local rect = GuiService.TopbarInset
+		if rect and rect.Max then best = math.max(best, rect.Max.Y) end
+	end)
+	pcall(function()
+		local top = GuiService:GetGuiInset()
+		if top then best = math.max(best, top.Y) end
+	end)
+	return best > 0 and best or 36
+end
+
+-- Re-runs `fn` whenever the topbar geometry changes (and once now).
+local function OnInsetChanged(fn)
+	fn()
+	pcall(function()
+		Onyx:Connect(GuiService:GetPropertyChangedSignal("TopbarInset"), fn)
+	end)
+end
+
+-- Drives a label's text from a function instead of a fixed string. Polled on
+-- a fixed interval rather than every frame, and only written when the value
+-- actually changes, so a live label costs almost nothing.
+local function BindText(label, producer, interval)
+	interval = tonumber(interval) or 0.1
+	local elapsed, last = interval, nil
+
+	local conn = Onyx:Connect(RunService.Heartbeat, function(dt)
+		elapsed = elapsed + (dt or 0)
+		if elapsed < interval then return end
+		elapsed = 0
+
+		local ok, value = pcall(producer)
+		if not ok then return end
+
+		value = tostring(value)
+		if value ~= last then
+			last = value
+			label.Text = value
+		end
+	end)
+
+	return function()
+		pcall(function() conn:Disconnect() end)
+	end
 end
 
 -- resolves an icon config value into an image asset string (or nil)
@@ -1492,16 +1544,22 @@ function Onyx.CreateWindow(a, b)
 
 		local fab = New("TextButton", {
 			Name = "Toggle", BackgroundColor3 = Theme.Surface, AutoButtonColor = false,
-			Text = "", Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(42, 42),
-			ZIndex = 30, Parent = WindowLayer,
+			Text = "", Position = UDim2.fromOffset(16, TopInset() + 10),
+			Size = UDim2.fromOffset(42, 42), ZIndex = 30, Parent = WindowLayer,
 		})
 		Corner(21, fab)
 		Stroke(fab, Theme.LineBright, 0.3)
 		OnyxMark(fab, 18, 31)
 
 		-- a tap toggles, a drag repositions: only real movement counts as a drag
-		local pressStart, moved = nil, false
-		Draggable(fab, fab, function() moved = false end)
+		local pressStart, moved, placed = nil, false, false
+		OnInsetChanged(function()
+			if placed then return end
+			fab.Position = UDim2.fromOffset(16, TopInset() + 10)
+		end)
+		Draggable(fab, fab, function() moved = false end, function()
+			if moved then placed = true end
+		end)
 		fab.InputBegan:Connect(function(input)
 			if IsClick(input) then pressStart, moved = input.Position, false end
 		end)
@@ -1848,9 +1906,11 @@ function ElementAPI(holder, parent, Window)
 		if typeof(cfg) == "string" then cfg = { Title = cfg } end
 		cfg = cfg or {}
 
+		local source = cfg.Title or cfg.Text or ""
+
 		local label = Text({
 			Name = "Label", Parent = parent, ZIndex = 6, Font = FONT_M, TextSize = 12.5,
-			Text = tostring(cfg.Title or cfg.Text or ""),
+			Text = typeof(source) == "function" and "" or tostring(source),
 			TextColor3 = cfg.Color or Theme.SubText, TextWrapped = true,
 			TextYAlignment = Enum.TextYAlignment.Top,
 			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
@@ -1858,10 +1918,39 @@ function ElementAPI(holder, parent, Window)
 		})
 
 		local api = { Instance = label, Type = "Label" }
-		function api.SetTitle(a, t) label.Text = tostring(typeof(a) == "string" and a or t) end
+		local unbind
+
+		-- Text can be a plain string or a function polled for a live value.
+		function api.Bind(a, producer, interval)
+			if a ~= api then producer, interval = a, producer end
+			if unbind then unbind(); unbind = nil end
+			if typeof(producer) ~= "function" then return api end
+			unbind = BindText(label, producer, interval or cfg.Interval)
+			return api
+		end
+		function api.Unbind()
+			if unbind then unbind(); unbind = nil end
+			return api
+		end
+
+		function api.SetTitle(a, t)
+			local value = typeof(a) == "string" and a or t
+			if typeof(a) == "function" or typeof(t) == "function" then
+				return api.Bind(typeof(a) == "function" and a or t)
+			end
+			api.Unbind()
+			label.Text = tostring(value)
+			return api
+		end
 		api.SetText = api.SetTitle
+		function api.SetColor(a, c) label.TextColor3 = typeof(a) == "Color3" and a or c end
 		function api.SetVisible(a, v) label.Visible = (typeof(a) == "boolean" and a or v) and true or false end
-		function api.Destroy() label:Destroy() end
+		function api.Destroy()
+			api.Unbind()
+			label:Destroy()
+		end
+
+		if typeof(source) == "function" then api.Bind(source) end
 		return api
 	end
 	holder.AddLabel = holder.Label
@@ -1884,27 +1973,334 @@ function ElementAPI(holder, parent, Window)
 		Padding(box, 10, 11, 11, 11)
 		List(box, 4)
 
+		local titleSource = cfg.Title or cfg.Name or ""
+		local bodySource  = cfg.Content or cfg.Description or cfg.Text or ""
+
 		local head = Text({
-			Parent = box, ZIndex = 7, Font = FONT_SB, TextSize = 12.5,
-			Text = tostring(cfg.Title or cfg.Name or ""), Size = UDim2.new(1, 0, 0, 15),
+			Name = "Title", Parent = box, ZIndex = 7, Font = FONT_SB, TextSize = 12.5,
+			Text = typeof(titleSource) == "function" and "" or tostring(titleSource),
+			Size = UDim2.new(1, 0, 0, 15),
 		})
 		local body = Text({
-			Parent = box, ZIndex = 7, Font = FONT, TextSize = 12,
-			Text = tostring(cfg.Content or cfg.Description or cfg.Text or ""),
+			Name = "Content", Parent = box, ZIndex = 7, Font = FONT, TextSize = 12,
+			Text = typeof(bodySource) == "function" and "" or tostring(bodySource),
 			TextColor3 = Theme.SubText, TextWrapped = true,
 			TextYAlignment = Enum.TextYAlignment.Top,
 			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 		})
 
 		local api = { Instance = box, Type = "Paragraph" }
-		function api.SetTitle(a, t) head.Text = tostring(typeof(a) == "string" and a or t) end
-		function api.SetContent(a, t) body.Text = tostring(typeof(a) == "string" and a or t) end
+		local unbindTitle, unbindBody
+
+		-- Either half can be a plain string or a function polled for a live value.
+		function api.BindTitle(a, producer, interval)
+			if a ~= api then producer, interval = a, producer end
+			if unbindTitle then unbindTitle(); unbindTitle = nil end
+			if typeof(producer) ~= "function" then return api end
+			unbindTitle = BindText(head, producer, interval or cfg.Interval)
+			return api
+		end
+		function api.BindContent(a, producer, interval)
+			if a ~= api then producer, interval = a, producer end
+			if unbindBody then unbindBody(); unbindBody = nil end
+			if typeof(producer) ~= "function" then return api end
+			unbindBody = BindText(body, producer, interval or cfg.Interval)
+			return api
+		end
+		api.Bind = api.BindContent
+
+		function api.Unbind()
+			if unbindTitle then unbindTitle(); unbindTitle = nil end
+			if unbindBody then unbindBody(); unbindBody = nil end
+			return api
+		end
+
+		function api.SetTitle(a, t)
+			local value = (a ~= api) and a or t
+			if typeof(value) == "function" then return api.BindTitle(value) end
+			if unbindTitle then unbindTitle(); unbindTitle = nil end
+			head.Text = tostring(value)
+			return api
+		end
+		function api.SetContent(a, t)
+			local value = (a ~= api) and a or t
+			if typeof(value) == "function" then return api.BindContent(value) end
+			if unbindBody then unbindBody(); unbindBody = nil end
+			body.Text = tostring(value)
+			return api
+		end
 		api.SetText = api.SetContent
 		function api.SetVisible(a, v) box.Visible = (typeof(a) == "boolean" and a or v) and true or false end
-		function api.Destroy() box:Destroy() end
+		function api.Destroy()
+			api.Unbind()
+			box:Destroy()
+		end
+
+		if typeof(titleSource) == "function" then api.BindTitle(titleSource) end
+		if typeof(bodySource) == "function" then api.BindContent(bodySource) end
 		return api
 	end
 	holder.AddParagraph = holder.Paragraph
+
+	------------------------------------------------------------------
+	-- Console
+	------------------------------------------------------------------
+	local CONSOLE_LEVELS = {
+		log     = function() return Theme.SubText end,
+		info    = function() return Theme.Info end,
+		success = function() return Theme.Success end,
+		warn    = function() return Theme.Warning end,
+		warning = function() return Theme.Warning end,
+		error   = function() return Theme.Danger end,
+	}
+
+	function holder.Console(p1, p2)
+		local cfg = p2
+		if p1 ~= holder then cfg = p1 end
+		cfg = cfg or {}
+
+		local height     = tonumber(cfg.Height) or 148
+		local maxLines   = tonumber(cfg.MaxLines) or 200
+		local timestamps = cfg.Timestamps ~= false
+		local autoScroll = cfg.AutoScroll ~= false
+
+		local box = New("Frame", {
+			Name = "Console", BackgroundColor3 = Theme.Surface, BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = order(), ZIndex = 6, Parent = parent,
+		})
+		Corner(6, box)
+		Stroke(box, Theme.Line)
+		Padding(box, 9, 10, 10, 10)
+		List(box, 7)
+		AttachTooltip(box, cfg.Tooltip)
+
+		-- header: label on the left, copy / clear on the right
+		local head = New("Frame", {
+			Name = "Head", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
+			LayoutOrder = 1, ZIndex = 7, Parent = box,
+		})
+		local titleLabel = Text({
+			Parent = head, ZIndex = 7, Font = FONT_B, TextSize = 11,
+			Text = string.upper(tostring(cfg.Title or cfg.Name or "Console")),
+			TextColor3 = Theme.Muted, Size = UDim2.new(1, -110, 1, 0),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+
+		local actions = New("Frame", {
+			BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(0, 14),
+			AutomaticSize = Enum.AutomaticSize.X, ZIndex = 7, Parent = head,
+		})
+		New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center, Parent = actions,
+		})
+
+		local function HeadAction(label, layoutOrder)
+			local btn = New("TextButton", {
+				BackgroundTransparency = 1, AutoButtonColor = false, Text = label,
+				Font = FONT_B, TextSize = 10.5, TextColor3 = Theme.Muted,
+				Size = UDim2.fromOffset(0, 14), AutomaticSize = Enum.AutomaticSize.X,
+				LayoutOrder = layoutOrder, ZIndex = 8, Parent = actions,
+			})
+			Hoverable(btn, function(state)
+				Tween(btn, {
+					TextColor3 = state == "idle" and Theme.Muted or Theme.Text,
+				}, EASE_SNAP)
+			end)
+			return btn
+		end
+
+		-- the terminal well: darker than the card, so it reads as inset
+		local screen = New("Frame", {
+			Name = "Screen", BackgroundColor3 = Theme.Backdrop, BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, height), LayoutOrder = 2, ZIndex = 7,
+			ClipsDescendants = true, Parent = box,
+		})
+		Corner(5, screen)
+		Stroke(screen, Theme.Line)
+
+		local scroll = New("ScrollingFrame", {
+			Name = "Lines", BackgroundTransparency = 1, BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.LineBright,
+			ScrollBarImageTransparency = 0.3,
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ZIndex = 7, Parent = screen,
+		})
+		Padding(scroll, 8, 8, 9, 9)
+		local lineLayout = List(scroll, 2)
+
+		local placeholder = Text({
+			Name = "Placeholder", Parent = scroll, ZIndex = 7, Font = FONT_MONO,
+			TextSize = 11.5, Text = tostring(cfg.Placeholder or "No output yet."),
+			TextColor3 = Theme.Muted, Size = UDim2.new(1, 0, 0, 15), LayoutOrder = 0,
+		})
+
+		local api = {
+			Instance = box, Type = "Console",
+			Lines = {},        -- newest last
+			AutoScroll = autoScroll,
+		}
+
+		-- Stick to the bottom only while the reader is already there: scrolling
+		-- up to read something must not be yanked back by the next line.
+		local sticky = true
+		-- the layout's content size, not AbsoluteCanvasSize: the canvas is a
+		-- frame behind when this fires, which scrolls one line short
+		local function maxScroll()
+			return math.max(0, (lineLayout.AbsoluteContentSize.Y + 16) - scroll.AbsoluteWindowSize.Y)
+		end
+		scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+			sticky = (maxScroll() - scroll.CanvasPosition.Y) <= 6
+		end)
+		lineLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+			if api.AutoScroll and sticky then
+				scroll.CanvasPosition = Vector2.new(0, maxScroll())
+			end
+		end)
+
+		local function stamp()
+			local now = os.date("*t")
+			return string.format("%02d:%02d:%02d", now.hour, now.min, now.sec)
+		end
+
+		local counter = 0
+		local function append(level, message)
+			local color = (CONSOLE_LEVELS[level] or CONSOLE_LEVELS.log)()
+			counter = counter + 1
+			placeholder.Visible = false
+
+			local line = New("Frame", {
+				Name = "Line", BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 0, 15), AutomaticSize = Enum.AutomaticSize.Y,
+				LayoutOrder = counter, ZIndex = 7, Parent = scroll,
+			})
+
+			local offset = 0
+			if timestamps then
+				Text({
+					Parent = line, ZIndex = 7, Font = FONT_MONO, TextSize = 10.5,
+					Text = stamp(), TextColor3 = Theme.Muted,
+					Size = UDim2.fromOffset(48, 15),
+				})
+				offset = 54
+			end
+
+			Text({
+				Name = "Message", Parent = line, ZIndex = 7, Font = FONT_MONO, TextSize = 11.5,
+				Text = message, TextColor3 = color, TextWrapped = true,
+				TextYAlignment = Enum.TextYAlignment.Top,
+				Position = UDim2.fromOffset(offset, 0),
+				Size = UDim2.new(1, -offset, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+			})
+
+			local entry = { Level = level, Text = message, Instance = line }
+			table.insert(api.Lines, entry)
+
+			-- ring buffer: drop the oldest rather than growing without bound
+			while #api.Lines > maxLines do
+				local oldest = table.remove(api.Lines, 1)
+				if oldest and oldest.Instance then oldest.Instance:Destroy() end
+			end
+
+			return entry
+		end
+
+		local function write(level, ...)
+			local parts = {}
+			for i = 1, select("#", ...) do
+				parts[#parts + 1] = tostring((select(i, ...)))
+			end
+			return append(level, table.concat(parts, " "))
+		end
+
+		local function levelFn(level)
+			return function(a, ...)
+				if a ~= api then return write(level, a, ...) end
+				return write(level, ...)
+			end
+		end
+
+		api.Log     = levelFn("log")
+		api.Print   = api.Log
+		api.Write   = api.Log
+		api.Info    = levelFn("info")
+		api.Success = levelFn("success")
+		api.Warn    = levelFn("warn")
+		api.Error   = levelFn("error")
+
+		function api.Clear()
+			for _, entry in ipairs(api.Lines) do
+				if entry.Instance then entry.Instance:Destroy() end
+			end
+			table.clear(api.Lines)
+			counter = 0
+			sticky = true
+			placeholder.Visible = true
+			return api
+		end
+
+		function api.GetText()
+			local out = {}
+			for i, entry in ipairs(api.Lines) do out[i] = entry.Text end
+			return table.concat(out, "\n")
+		end
+
+		function api.Copy()
+			local clip = (typeof(setclipboard) == "function" and setclipboard)
+				or (typeof(toclipboard) == "function" and toclipboard)
+			if not clip then return false end
+			local ok = pcall(clip, api.GetText())
+			return ok
+		end
+
+		function api.SetHeight(a, px)
+			local value = tonumber((a ~= api) and a or px)
+			if value then screen.Size = UDim2.new(1, 0, 0, value) end
+			return api
+		end
+		function api.SetAutoScroll(a, v)
+			api.AutoScroll = ((a ~= api) and a or v) and true or false
+			return api
+		end
+		function api.SetTitle(a, t)
+			titleLabel.Text = string.upper(tostring((a ~= api) and a or t))
+		end
+		function api.SetVisible(a, v)
+			box.Visible = (typeof(a) == "boolean" and a or v) and true or false
+		end
+		function api.Destroy() box:Destroy() end
+
+		if cfg.Copy ~= false then
+			local copyBtn = HeadAction("COPY", 1)
+			copyBtn.MouseButton1Click:Connect(function()
+				local done = api.Copy()
+				copyBtn.Text = done and "COPIED" or "NO CLIPBOARD"
+				task.delay(1.2, function()
+					if copyBtn.Parent then copyBtn.Text = "COPY" end
+				end)
+			end)
+		end
+		if cfg.Clear ~= false then
+			HeadAction("CLEAR", 2).MouseButton1Click:Connect(function() api.Clear() end)
+		end
+
+		for _, entry in ipairs(cfg.Lines or {}) do
+			if typeof(entry) == "table" then
+				write(entry.Level or entry[2] or "log", entry.Text or entry[1] or "")
+			else
+				write("log", entry)
+			end
+		end
+
+		return api
+	end
+	holder.AddConsole = holder.Console
+	holder.Output     = holder.Console
 
 	------------------------------------------------------------------
 	-- Divider
@@ -3184,7 +3580,7 @@ function Onyx.Watermark(a, b)
 
 	local mark = New("Frame", {
 		Name = "Watermark", BackgroundColor3 = Theme.Surface, BorderSizePixel = 0,
-		Position = cfg.Position or UDim2.fromOffset(18, 18),
+		Position = cfg.Position or UDim2.fromOffset(18, TopInset() + 10),
 		Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X,
 		ZIndex = 40, Parent = WindowLayer,
 	})
@@ -3226,7 +3622,28 @@ function Onyx.Watermark(a, b)
 		end)
 	end
 
-	if cfg.Draggable ~= false then Draggable(mark, mark) end
+	-- The ScreenGui ignores the GUI inset, so "below the unibar" has to be
+	-- tracked by hand. Stop once the user drags it: their placement wins.
+	local placed = cfg.Position ~= nil
+	if not placed then
+		OnInsetChanged(function()
+			if placed then return end
+			mark.Position = UDim2.fromOffset(18, TopInset() + 10)
+		end)
+	end
+
+	function api.SetPosition(a, position)
+		local value = (a ~= api) and a or position
+		if typeof(value) == "UDim2" then
+			placed = true
+			mark.Position = value
+		end
+		return api
+	end
+
+	if cfg.Draggable ~= false then
+		Draggable(mark, mark, function() placed = true end)
+	end
 	return api
 end
 

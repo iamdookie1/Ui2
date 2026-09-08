@@ -340,6 +340,113 @@ Window.MobileButton.MouseButton1Click:Fire()
 assert(Window.Visible ~= beforeToggle, "the fallback button should toggle the window")
 Window:SetVisible(true)
 
+--------------------------------------------------------------------
+-- live text: labels and paragraphs driven by a function
+--------------------------------------------------------------------
+local RS = game:GetService("RunService")
+local tick = 0
+
+local liveLabel = Misc:Label({ Title = function() return "count: " .. tick end })
+RS.Heartbeat:Fire(0.2)
+assert(liveLabel.Instance.Text == "count: 0", "live label did not take its first value")
+tick = 7
+RS.Heartbeat:Fire(0.2)
+assert(liveLabel.Instance.Text == "count: 7", "live label did not follow the value")
+
+liveLabel:Unbind()
+tick = 9
+RS.Heartbeat:Fire(0.2)
+assert(liveLabel.Instance.Text == "count: 7", "unbind should stop updates")
+
+liveLabel:SetText("static")
+assert(liveLabel.Instance.Text == "static", "SetText should still work after unbind")
+liveLabel:SetText(function() return "rebound " .. tick end)
+RS.Heartbeat:Fire(0.2)
+assert(liveLabel.Instance.Text == "rebound 9", "passing a function to SetText should rebind")
+
+local livePara = Misc:Paragraph({ Title = "Live", Content = function() return "value " .. tick end })
+RS.Heartbeat:Fire(0.2)
+assert(livePara.Instance.Title.Text == "Live", "a static paragraph title should stay put")
+assert(livePara.Instance.Content.Text == "value 9", "live paragraph body did not bind")
+tick = 11
+RS.Heartbeat:Fire(0.2)
+assert(livePara.Instance.Content.Text == "value 11", "live paragraph body did not follow")
+livePara:BindTitle(function() return "T" .. tick end)
+RS.Heartbeat:Fire(0.2)
+assert(livePara.Instance.Title.Text == "T11", "BindTitle did not take")
+livePara:SetContent("frozen")
+RS.Heartbeat:Fire(0.2)
+assert(livePara.Instance.Content.Text == "frozen", "SetContent should unbind the body")
+
+-- a destroyed live element must stop polling
+livePara:Destroy()
+liveLabel:Destroy()
+RS.Heartbeat:Fire(0.2)
+
+--------------------------------------------------------------------
+-- console
+--------------------------------------------------------------------
+local console = Misc:Console({ Title = "Output", Height = 120, MaxLines = 3 })
+local screen = console.Instance:FindFirstChild("Screen")
+assert(screen, "console should have a screen")
+local placeholder = screen.Lines:FindFirstChild("Placeholder")
+assert(placeholder and placeholder.Visible == true, "an empty console shows its placeholder")
+
+console:Log("hello", "world")
+assert(#console.Lines == 1, "console should have one line")
+assert(console.Lines[1].Text == "hello world", "console should join arguments with a space")
+assert(placeholder.Visible == false, "placeholder hides once there is output")
+
+console:Info("i")
+console:Success("s")
+console:Warn("w")
+console:Error("e")
+assert(#console.Lines == 3, "ring buffer should cap at MaxLines, got " .. #console.Lines)
+assert(console.Lines[1].Text == "s", "the oldest lines should be dropped first")
+assert(console.Lines[3].Level == "error", "last line should keep its level")
+assert(console:GetText() == "s\nw\ne", "GetText should join the surviving lines")
+assert(console:Copy() == false, "no clipboard exists in the mock")
+
+console:SetHeight(90)
+assert(screen.Size.Y.Offset == 90, "SetHeight did not resize the screen")
+
+console:Clear()
+assert(#console.Lines == 0, "clear should empty the buffer")
+assert(placeholder.Visible == true, "clear should bring the placeholder back")
+
+-- header actions are wired
+local clearBtn
+for _, c in ipairs(console.Instance.Head:GetDescendants()) do
+	if c.ClassName == "TextButton" and c.Text == "CLEAR" then clearBtn = c end
+end
+assert(clearBtn, "console should have a CLEAR action")
+console:Log("about to be cleared")
+clearBtn.MouseButton1Click:Fire()
+assert(#console.Lines == 0, "the CLEAR action should empty the console")
+
+local seeded = Misc:Console({ Title = "Seeded", Lines = { "one", { Text = "two", Level = "warn" } } })
+assert(#seeded.Lines == 2, "Lines config should seed the console")
+assert(seeded.Lines[2].Level == "warn", "seeded line levels should be honoured")
+seeded:Destroy()
+
+--------------------------------------------------------------------
+-- things placed below Roblox's topbar
+--------------------------------------------------------------------
+-- the mock reports TopbarInset 44 and GetGuiInset 36, so the larger wins
+local placedMark = Onyx:Watermark({ Text = "inset" })
+assert(placedMark.Instance.Position.Y.Offset == 54,
+	"watermark should sit below the unibar, got " .. placedMark.Instance.Position.Y.Offset)
+assert(Window.MobileButton.Position.Y.Offset == 54,
+	"the fallback button should sit below the unibar too")
+
+placedMark:SetPosition(UDim2.fromOffset(4, 4))
+assert(placedMark.Instance.Position.Y.Offset == 4, "SetPosition should win")
+placedMark:Destroy()
+
+local fixedMark = Onyx:Watermark({ Text = "fixed", Position = UDim2.fromOffset(2, 3) })
+assert(fixedMark.Instance.Position.Y.Offset == 3, "an explicit Position should be left alone")
+fixedMark:Destroy()
+
 Settings:Button({ Title = "Unload", Callback = function() end })
 
 MOCK.step(3)
