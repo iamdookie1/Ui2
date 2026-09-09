@@ -24,7 +24,7 @@ Onyx:Watermark({ Text = "Onyx", ShowFPS = true })
 local Main    = Window:CreateTab({ Title = "Main" })
 local Visuals = Window:CreateTab({ Title = "Visuals" })
 local Player  = Window:CreateTab({ Title = "Player" })
-local Config  = Window:CreateTab({ Title = "Config" })
+local Debug   = Window:CreateTab({ Title = "Debug" })
 
 local Combat = Main:CreateSection("Combat")
 
@@ -114,6 +114,18 @@ Targeting:Button({
 	end,
 })
 
+-- Mini elements take half a row, so two sit side by side. Buttons, toggles,
+-- keybinds and colour pickers can be mini; sliders, dropdowns and inputs
+-- need the full width and ignore it.
+Targeting:Toggle({ Title = "Visible only", Mini = true, Flag = "VisibleOnly" })
+Targeting:Toggle({ Title = "Walls",        Mini = true, Flag = "ThroughWalls" })
+
+Targeting:Button({ Title = "Freeze",  Mini = true, Callback = function() end })
+Targeting:Button({ Title = "Release", Mini = true, Callback = function() end })
+
+Targeting:Keybind({ Title = "Lock",  Mini = true, Default = Enum.KeyCode.Q })
+Targeting:Colorpicker({ Title = "Tag", Mini = true, Default = Color3.fromRGB(120, 90, 255) })
+
 --------------------------------------------------------------------
 -- Visuals
 --------------------------------------------------------------------
@@ -159,71 +171,13 @@ Danger:Button({
 })
 
 --------------------------------------------------------------------
--- Config
+-- Debug
+--
+-- Config saving, the accent, the toggle key and the notification corner all
+-- live behind the settings icon in the topbar now, so this tab does not
+-- repeat them. Add your own settings with Window:SettingsSection().
 --------------------------------------------------------------------
-local Saves = Config:CreateSection("Configuration")
-
-local configName = Saves:Input({
-	Title       = "Config name",
-	Placeholder = "default",
-	Default     = "default",
-	Flag        = "ConfigName",
-})
-
-local configList = Saves:Dropdown({
-	Title  = "Saved configs",
-	Values = Onyx:ListConfigs(),
-	Search = true,
-})
-
-Saves:Button({ Title = "Save", Callback = function()
-	local ok, err = Onyx:SaveConfig(configName:Get())
-	Onyx:Notify({
-		Title   = ok and "Config saved" or "Save failed",
-		Content = ok and configName:Get() or tostring(err),
-		Type    = ok and "success" or "error",
-	})
-	configList:SetValues(Onyx:ListConfigs())
-end })
-
-Saves:Button({ Title = "Load", Callback = function()
-	local target = configList:Get() or configName:Get()
-	local ok, err = Onyx:LoadConfig(target)
-	Onyx:Notify({
-		Title   = ok and "Config loaded" or "Load failed",
-		Content = ok and tostring(target) or tostring(err),
-		Type    = ok and "success" or "error",
-	})
-end })
-
-Saves:Button({ Title = "Delete", Confirm = true, Callback = function()
-	local target = configList:Get() or configName:Get()
-	Onyx:DeleteConfig(target)
-	configList:SetValues(Onyx:ListConfigs())
-end })
-
-local Interface = Config:CreateSection("Interface")
-
-Interface:Colorpicker({
-	Title    = "Accent",
-	Default  = Color3.fromRGB(232, 232, 240),
-	Callback = function(color) Onyx:SetAccent(color) end,
-})
-
-Interface:Keybind({
-	Title    = "Toggle UI",
-	Default  = Enum.KeyCode.RightShift,
-	Callback = function() Window:Toggle() end,
-})
-
-Interface:Dropdown({
-	Title    = "Notification corner",
-	Values   = { "bottom-right", "bottom-left", "bottom-center", "top-right", "top-left", "top-center" },
-	Default  = "bottom-right",
-	Callback = function(corner) Onyx:SetNotificationCorner(corner) end,
-})
-
-local Log = Config:CreateSection("Console")
+local Log = Debug:CreateSection("Console")
 
 local console = Log:Console({
 	Title       = "Output",
@@ -246,7 +200,7 @@ Onyx:GetOption("SilentAim").Callback = function(state)
 	console:Info("silent aim " .. (state and "on" or "off"))
 end
 
-local Toasts = Config:CreateSection("Notifications")
+local Toasts = Debug:CreateSection("Notifications")
 
 for _, kind in ipairs({ "default", "info", "success", "warning", "error" }) do
 	Toasts:Button({
@@ -262,11 +216,26 @@ for _, kind in ipairs({ "default", "info", "success", "warning", "error" }) do
 	})
 end
 
-Interface:Button({ Title = "Unload", Confirm = true, Callback = function() Onyx:Unload() end })
+--------------------------------------------------------------------
+-- Settings page additions
+--------------------------------------------------------------------
+local Script = Window:SettingsSection("Script")
+
+Script:Toggle({ Title = "Verbose log", Mini = true, Callback = function(state)
+	console:Info("verbose logging " .. (state and "on" or "off"))
+end })
+Script:Toggle({ Title = "Silent mode", Mini = true })
+
+Script:Button({ Title = "Rejoin",  Mini = true, Callback = function() end })
+Script:Button({ Title = "Servers", Mini = true, Callback = function() end })
+
+Script:Label({ Title = function()
+	return "Auto save is " .. (Onyx.Settings.AutoSave and "on" or "off")
+end })
 
 Onyx:Notify({
 	Title    = "Onyx loaded",
-	Content  = "Right Shift, or the diamond in the topbar, hides the interface.",
+	Content  = "Right Shift or the topbar diamond hides it. Config lives behind the settings icon.",
 	Duration = 5,
 	Type     = "success",
 })

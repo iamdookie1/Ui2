@@ -54,6 +54,7 @@ local Window = Onyx:CreateWindow({
     ShowUserInfo = true,                     -- avatar + name in the rail
     UnibarIcon   = true,                     -- show/hide button in Roblox's topbar
     MobileButton = "auto",                   -- floating button: auto | true | false
+    Settings     = true,                     -- settings icon + page in the topbar
     OnClose      = "hide",                   -- or a function; default asks to unload
 })
 ```
@@ -67,6 +68,8 @@ local Window = Onyx:CreateWindow({
 | `Window:Minimize(bool)` | Collapses to the topbar. |
 | `Window:SetToggleKey(keyCode)` | Rebinds the show/hide key. |
 | `Window:Dialog(cfg)` | Modal dialog (see below). |
+| `Window:ToggleSettings()` | Opens/closes the settings page. Also `OpenSettings`, `CloseSettings`. |
+| `Window:SettingsSection(title)` | Adds your own section to the settings page. |
 | `Window:Notify(cfg)` | Same as `Onyx:Notify`. |
 | `Window:Destroy()` | Removes this window only. |
 
@@ -111,6 +114,45 @@ character drawn as text — note that Roblox's Gotham font has no glyphs for mos
 geometric shapes, so an asset id is the reliable choice. Elements can be added
 to a tab directly or to a section; both expose the same constructors.
 
+### Settings
+
+The topbar carries a settings icon (drawn, like the rest) that slides open a
+settings page over the window. It is a page rather than a tab so it stays out
+of your script's own navigation, and it ships with:
+
+- **Configuration** — config name, saved-config list, and save / load / delete /
+  refresh as mini buttons, plus **Auto save** and **Auto load** toggles.
+- **Interface** — accent colour, the show/hide keybind, notification corner.
+- **Session** — unload, behind a confirmation.
+
+Add your own with `Window:SettingsSection(title)`, which returns a section with
+the full element API:
+
+```lua
+local Script = Window:SettingsSection("Script")
+Script:Toggle({ Title = "Verbose log", Mini = true })
+Script:Button({ Title = "Rejoin", Mini = true })
+```
+
+Pass `Settings = false` to `CreateWindow` to drop the icon and page entirely.
+
+Interface preferences live in `OnyxUI/settings.json`, separate from configs on
+purpose: a config is your script's state, these are the interface's. **Auto
+save** writes the named config whenever a flagged value changes, debounced so
+dragging a slider writes once. **Auto load** restores that config the next time
+the script runs.
+
+```lua
+Onyx.Settings          -- { AutoSave, AutoLoad, Config, NotificationCorner, Accent }
+Onyx:SaveSettings()
+Onyx:ApplyAutoLoad()   -- normally automatic; call it yourself if you build async
+```
+
+Auto-load cannot run inside `CreateWindow` — the elements it restores do not
+exist yet — so it is deferred until the calling script has finished building
+the interface. If your script creates elements asynchronously (after a `wait`,
+inside a coroutine), call `Onyx:ApplyAutoLoad()` yourself once they exist.
+
 ---
 
 ## Elements
@@ -121,6 +163,27 @@ elements add `:Set(value)` and `:Get()`.
 
 Any element given a `Flag` publishes its value to `Onyx.Flags[flag]` and is
 included in saved configs.
+
+### Half-width elements
+
+`Mini = true` makes an element take half a row, so two sit side by side:
+
+```lua
+Section:Toggle({ Title = "Visible only", Mini = true })
+Section:Toggle({ Title = "Walls",        Mini = true })
+
+Section:Button({ Title = "Freeze",  Mini = true })
+Section:Button({ Title = "Release", Mini = true })
+```
+
+They pair up in creation order, two to a row, and the pair can mix types — a
+mini button next to a mini toggle is fine. **Button, Toggle, Keybind and
+Colorpicker** can be mini. Slider, Dropdown, Input, Console, Paragraph, Label
+and Divider need the full width and ignore `Mini`.
+
+Anything full width closes the open pair, so a slider between two minis keeps
+them on separate rows. `Section:Break()` abandons a half-filled row on demand
+if you want the next mini to start fresh.
 
 ### Button
 

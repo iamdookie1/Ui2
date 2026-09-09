@@ -275,6 +275,23 @@ assert(ddRow.BackgroundColor3 == idle, "the row behind an open dropdown must sta
 tog.Instance.MouseEnter:Fire()
 assert(tog.Instance.BackgroundColor3 == idle, "other rows must stay idle while a popout is open")
 
+-- but controls inside the thing that owns focus must still respond
+local dialogIdle
+local focusDialog = Window:Dialog({ Title = "Hover me", Buttons = { { Title = "Nope" }, { Title = "Yep", Primary = true } } })
+local nopeBtn
+for _, inst in ipairs(MOCK.allInstances) do
+	if inst.ClassName == "TextButton" and inst.Text == "Nope" then nopeBtn = inst end
+end
+assert(nopeBtn, "dialog button not found")
+dialogIdle = nopeBtn.BackgroundColor3
+nopeBtn.MouseEnter:Fire()
+assert(nopeBtn.BackgroundColor3 ~= dialogIdle, "a dialog's own buttons must still hover while it owns focus")
+nopeBtn.MouseLeave:Fire()
+focusDialog.Close()
+MOCK.step(0.5)
+dd.Instance.MouseButton1Click:Fire()
+MOCK.step(0.5)
+
 -- and it lights up again the moment the popout closes
 dd.Instance.MouseButton1Click:Fire()
 MOCK.step(0.5)
@@ -446,6 +463,125 @@ placedMark:Destroy()
 local fixedMark = Onyx:Watermark({ Text = "fixed", Position = UDim2.fromOffset(2, 3) })
 assert(fixedMark.Instance.Position.Y.Offset == 3, "an explicit Position should be left alone")
 fixedMark:Destroy()
+
+--------------------------------------------------------------------
+-- mini elements pair two to a row
+--------------------------------------------------------------------
+local Pairs = Visuals:CreateSection("Mini")
+
+local miniA = Pairs:Button({ Title = "A", Mini = true })
+local miniB = Pairs:Toggle({ Title = "B", Mini = true })
+assert(miniA.Instance.Parent == miniB.Instance.Parent, "two minis should share a row")
+assert(miniA.Instance.Parent.Name == "Pair", "minis should live in a Pair row")
+assert(miniA.Instance.Size.X.Scale == 0.5 and miniA.Instance.Size.X.Offset == -3,
+	"a mini should be half width minus half the gutter")
+assert(miniA.Instance.LayoutOrder == 1 and miniB.Instance.LayoutOrder == 2,
+	"minis should order left to right within their row")
+
+-- a third opens a fresh row
+local miniC = Pairs:Keybind({ Title = "C", Mini = true })
+assert(miniC.Instance.Parent ~= miniA.Instance.Parent, "a third mini starts a new row")
+assert(miniC.Instance.Parent.Name == "Pair", "the new row is still a Pair")
+
+-- anything full width closes the open pair
+local miniD = Pairs:Colorpicker({ Title = "D", Mini = true })
+assert(miniD.Instance.Parent == miniC.Instance.Parent, "the second half should still be free")
+local fullSlider = Pairs:Slider({ Title = "full", Min = 0, Max = 10 })
+assert(fullSlider.Instance.Parent == Pairs.Container, "a slider is always full width")
+assert(fullSlider.Instance.Size.X.Scale == 1, "a slider should span the row")
+local miniE = Pairs:Button({ Title = "E", Mini = true })
+assert(miniE.Instance.Parent ~= miniC.Instance.Parent, "a full-width element must break the pair")
+
+-- Break() abandons a half-filled row on demand
+local miniF = Pairs:Button({ Title = "F", Mini = true })
+assert(miniF.Instance.Parent == miniE.Instance.Parent, "F should join E")
+Pairs:Break()
+local miniG = Pairs:Button({ Title = "G", Mini = true })
+assert(miniG.Instance.Parent ~= miniE.Instance.Parent, "Break should start a new row")
+
+-- Mini is ignored where it cannot work
+local wideDrop = Pairs:Dropdown({ Title = "wide", Values = { "x" }, Mini = true })
+assert(wideDrop.Instance.Size.X.Scale == 1, "a dropdown stays full width even when asked to be mini")
+
+--------------------------------------------------------------------
+-- settings page
+--------------------------------------------------------------------
+local function findRow(root, className, title)
+	for _, inst in ipairs(root:GetDescendants()) do
+		if inst.Name == className then
+			local col = inst:FindFirstChild("Text")
+			local label = col and col:FindFirstChild("Title")
+			if label and label.Text == title then return inst end
+		end
+	end
+	return nil
+end
+
+assert(Window.SettingsPage, "the window should have a settings page")
+assert(Window.SettingsPage.Visible == false, "settings should start closed")
+
+Window:OpenSettings()
+assert(Window.SettingsOpen == true, "OpenSettings should open it")
+assert(Window.SettingsPage.Visible == true, "the page should be visible")
+assert(Onyx.Focus == Window.SettingsPage, "the settings page should own the pointer")
+
+-- the page's own controls must still respond while it holds focus
+local autoSaveRow = findRow(Window.SettingsPage, "Toggle", "Auto save")
+assert(autoSaveRow, "settings should offer an auto save toggle")
+local settingsIdle = autoSaveRow.BackgroundColor3
+autoSaveRow.MouseEnter:Fire()
+assert(autoSaveRow.BackgroundColor3 ~= settingsIdle,
+	"controls inside the settings page must hover while it owns focus")
+autoSaveRow.MouseLeave:Fire()
+
+-- the config actions are laid out as mini pairs
+local saveRow = findRow(Window.SettingsPage, "Button", "Save")
+local loadRow = findRow(Window.SettingsPage, "Button", "Load")
+assert(saveRow and loadRow, "settings should offer save and load")
+assert(saveRow.Parent == loadRow.Parent and saveRow.Parent.Name == "Pair",
+	"save and load should sit side by side")
+
+-- auto save / auto load persist to the settings file
+autoSaveRow.MouseButton1Click:Fire()
+assert(Onyx.Settings.AutoSave == true, "the toggle should update the stored setting")
+assert(MOCK.files["OnyxUI/settings.json"], "settings should be written to disk")
+autoSaveRow.MouseButton1Click:Fire()
+assert(Onyx.Settings.AutoSave == false, "toggling back should clear it")
+
+local autoLoadRow = findRow(Window.SettingsPage, "Toggle", "Auto load")
+assert(autoLoadRow, "settings should offer an auto load toggle")
+
+-- scripts can add their own settings sections
+local custom = Window:SettingsSection("Script")
+custom:Toggle({ Title = "Custom setting", Mini = true })
+custom:Button({ Title = "Custom action", Mini = true })
+assert(custom.Instance.Parent == Window.SettingsPage.Body,
+	"a custom settings section should land on the settings page")
+assert(findRow(Window.SettingsPage, "Toggle", "Custom setting"), "the custom toggle should exist")
+
+Window:CloseSettings()
+MOCK.step(0.5)
+assert(Window.SettingsOpen == false, "CloseSettings should close it")
+assert(Onyx.Focus == nil, "closing settings should release the pointer")
+
+-- and the settings page expands a minimized window, like a dialog
+Window:Minimize(true)
+Window:ToggleSettings()
+assert(Window.Minimized == false, "opening settings must expand a minimized window")
+Window:CloseSettings()
+MOCK.step(0.5)
+
+--------------------------------------------------------------------
+-- auto load restores a config on demand
+--------------------------------------------------------------------
+Onyx.Settings.AutoLoad = true
+Onyx.Settings.Config = "test"
+tog:Set(false)
+sld:Set(3)
+local applied = Onyx:ApplyAutoLoad()
+assert(applied == true, "ApplyAutoLoad should report success")
+assert(tog:Get() == true and sld:Get() == 72, "auto load should restore the saved config")
+Onyx.Settings.AutoLoad = false
 
 Settings:Button({ Title = "Unload", Callback = function() end })
 
