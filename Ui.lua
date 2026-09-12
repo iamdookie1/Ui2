@@ -2437,10 +2437,17 @@ function SectionFactory(host, page, Window)
 		local collapsible = scfg.Collapsible == true or scfg.Collapsed ~= nil
 
 		-- the header is a button only when it has something to do
-		local head = New(collapsible and "TextButton" or "Frame", {
-			Name = "Head", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+		-- Text and AutoButtonColor only exist on the button, and assigning a
+		-- property a class does not have is an error in Roblox
+		local headProps = {
+			Name = "Head", BackgroundTransparency = 1,
 			Size = UDim2.new(1, 0, 0, 16), LayoutOrder = 1, ZIndex = 5, Parent = holder,
-		})
+		}
+		if collapsible then
+			headProps.Text = ""
+			headProps.AutoButtonColor = false
+		end
+		local head = New(collapsible and "TextButton" or "Frame", headProps)
 
 		local headX = 0
 		local caret

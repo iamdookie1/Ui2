@@ -165,6 +165,88 @@ local EVENTS = {
 	"Focused", "FocusLost", "Activated", "ChildAdded", "ChildRemoved",
 }
 
+-- Property schemas
+--
+-- Roblox errors when you assign a property a class does not have, so a mock
+-- that accepts anything hides a whole category of bug that only shows up in
+-- game. These cover the classes this library builds; a class with no entry is
+-- not checked.
+
+local function set(...)
+	local out = {}
+	for _, group in ipairs({ ... }) do
+		for _, name in ipairs(group) do out[name] = true end
+	end
+	return out
+end
+
+local INSTANCE = {
+	"Name", "Parent", "ClassName", "Archivable", "Destroyed",
+}
+
+local GUI_OBJECT = {
+	"Active", "AnchorPoint", "AutomaticSize", "AutoLocalize",
+	"BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderMode",
+	"BorderSizePixel", "ClipsDescendants", "Draggable", "Interactable",
+	"LayoutOrder", "NextSelectionDown", "NextSelectionLeft", "NextSelectionRight",
+	"NextSelectionUp", "Position", "Rotation", "Selectable", "SelectionOrder",
+	"Size", "SizeConstraint", "Transparency", "Visible", "ZIndex",
+	"AbsolutePosition", "AbsoluteSize", "AbsoluteRotation",
+}
+
+local GUI_BUTTON = { "AutoButtonColor", "Modal", "Style", "Selected" }
+
+local TEXT = {
+	"ContentText", "Font", "FontFace", "LineHeight", "MaxVisibleGraphemes",
+	"OpenTypeFeatures", "RichText", "Text", "TextBounds", "TextColor3",
+	"TextDirection", "TextFits", "TextScaled", "TextSize", "TextStrokeColor3",
+	"TextStrokeTransparency", "TextTransparency", "TextTruncate", "TextWrapped",
+	"TextXAlignment", "TextYAlignment",
+}
+
+local TEXTBOX = {
+	"ClearTextOnFocus", "CursorPosition", "MultiLine", "PlaceholderColor3",
+	"PlaceholderText", "SelectionStart", "ShowNativeInput", "TextEditable",
+}
+
+local IMAGE = {
+	"Image", "ImageColor3", "ImageContent", "ImageRectOffset", "ImageRectSize",
+	"ImageTransparency", "IsLoaded", "ResampleMode", "ScaleType", "SliceCenter",
+	"SliceScale", "TileSize",
+}
+
+local SCROLLING = {
+	"AutomaticCanvasSize", "BottomImage", "CanvasPosition", "CanvasSize",
+	"ElasticBehavior", "HorizontalScrollBarInset", "MidImage",
+	"ScrollBarImageColor3", "ScrollBarImageTransparency", "ScrollBarThickness",
+	"ScrollingDirection", "ScrollingEnabled", "TopImage", "VerticalScrollBarInset",
+	"VerticalScrollBarPosition", "AbsoluteCanvasSize", "AbsoluteWindowSize",
+}
+
+local SCHEMA = {
+	Frame          = set(INSTANCE, GUI_OBJECT),
+	ScrollingFrame = set(INSTANCE, GUI_OBJECT, SCROLLING),
+	TextLabel      = set(INSTANCE, GUI_OBJECT, TEXT),
+	TextButton     = set(INSTANCE, GUI_OBJECT, GUI_BUTTON, TEXT),
+	TextBox        = set(INSTANCE, GUI_OBJECT, TEXT, TEXTBOX),
+	ImageLabel     = set(INSTANCE, GUI_OBJECT, IMAGE),
+	ImageButton    = set(INSTANCE, GUI_OBJECT, GUI_BUTTON, IMAGE,
+		{ "HoverImage", "PressedImage" }),
+	ScreenGui      = set(INSTANCE, {
+		"AbsolutePosition", "AbsoluteSize", "ClipToDeviceSafeArea", "DisplayOrder",
+		"Enabled", "IgnoreGuiInset", "OnTopOfCoreBlur", "ResetOnSpawn",
+		"SafeAreaCompatibility", "ScreenInsets", "ZIndexBehavior",
+	}),
+	UICorner   = set(INSTANCE, { "CornerRadius" }),
+	UIStroke   = set(INSTANCE, { "ApplyStrokeMode", "Color", "Enabled", "LineJoinMode", "Thickness", "Transparency" }),
+	UIPadding  = set(INSTANCE, { "PaddingBottom", "PaddingLeft", "PaddingRight", "PaddingTop" }),
+	UIGradient = set(INSTANCE, { "Color", "Enabled", "Offset", "Rotation", "Transparency" }),
+	UIListLayout = set(INSTANCE, {
+		"AbsoluteContentSize", "FillDirection", "HorizontalAlignment", "HorizontalFlex",
+		"ItemLineAlignment", "Padding", "SortOrder", "VerticalAlignment", "VerticalFlex", "Wraps",
+	}),
+}
+
 local Instance_mt = {}
 Instance_mt.__instance = true
 
@@ -210,6 +292,13 @@ end
 
 function Instance_mt.__newindex(self, key, value)
 	local props = rawget(self, "_props")
+
+	local allowed = SCHEMA[props.ClassName]
+	if allowed and not allowed[key] then
+		error(key .. " is not a valid member of " .. props.ClassName
+			.. ' "' .. tostring(props.Name) .. '"', 2)
+	end
+
 	if key == "Parent" then
 		local old = props.Parent
 		if old then

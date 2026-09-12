@@ -1,4 +1,12 @@
 -- exercised against the mock environment
+-- The mock rejects properties a class does not have, the way Roblox does.
+-- Without this a bug like assigning Text to a Frame passes every test here and
+-- only fails in game, which is exactly what happened once.
+assert(pcall(function() Instance.new("Frame").Text = "" end) == false,
+	"the mock must reject invalid properties")
+assert(pcall(function() Instance.new("TextButton").Text = "" end) == true,
+	"but must still allow valid ones")
+
 local ok, Onyx = pcall(LoadOnyx)
 assert(ok, "library failed to load: " .. tostring(Onyx))
 print("loaded " .. Onyx.Name .. " v" .. Onyx.Version)
@@ -917,6 +925,10 @@ assert(startFolded.Container.Visible == false, "and hide its contents")
 -- a plain section still has no header button
 local plain = Visuals:CreateSection("Plain")
 assert(plain.Instance.Head.ClassName == "Frame", "a non-collapsible header stays a frame")
+-- under the property guard, building one at all proves its header is never
+-- handed Text or AutoButtonColor, which a Frame does not have
+assert(pcall(function() return Visuals:CreateSection("Guarded") end),
+	"a plain section must build without touching button-only properties")
 assert(plain.SetCollapsed == nil, "and gets no collapse methods")
 
 Settings:Button({ Title = "Unload", Callback = function() end })
