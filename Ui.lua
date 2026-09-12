@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.0.0
+	  ONYX UI  ·  v1.1.0
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.0.0",
+	Version     = "1.1.0",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value

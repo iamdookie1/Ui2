@@ -13,6 +13,24 @@ local Group  = Tab:CreateSection("Combat")
 Group:Toggle({ Title = "Aimbot", Flag = "Aimbot", Callback = print })
 ```
 
+### Getting the current build
+
+`game:HttpGet` results are cached, by the executor and by GitHub's CDN, so a
+fresh push can take a while to reach you and an old copy can produce errors
+that were already fixed. Two ways around it:
+
+```lua
+-- always fetch the newest main
+local url = "https://raw.githubusercontent.com/iamdookie1/Ui2/main/Ui.lua?v=" .. tostring(tick())
+local Onyx = loadstring(game:HttpGet(url))()
+
+-- or pin a commit, which is never stale and never changes under you
+local Onyx = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/iamdookie1/Ui2/<commit-sha>/Ui.lua"))()
+```
+
+`print(Onyx.Version)` tells you which build you actually loaded.
+
 Run the full feature demo:
 
 ```lua
