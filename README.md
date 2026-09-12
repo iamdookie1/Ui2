@@ -149,8 +149,9 @@ The topbar carries a settings icon (drawn, like the rest) that slides open a
 settings page over the window. It is a page rather than a tab so it stays out
 of your script's own navigation, and it ships with:
 
-- **Configuration** — config name, saved-config list, and save / load / delete /
-  refresh as mini buttons, plus **Auto save** and **Auto load** toggles.
+- **Configuration** — the current game key and auto load target, config name,
+  saved-config list, save / load / delete / refresh as mini buttons, an
+  **Auto load this** / **No auto load** pair, and an **Auto save** toggle.
 - **Interface** — accent colour, the show/hide keybind, notification corner.
 - **Session** — unload, behind a confirmation.
 
@@ -166,10 +167,9 @@ Script:Button({ Title = "Rejoin", Mini = true })
 Pass `Settings = false` to `CreateWindow` to drop the icon and page entirely.
 
 Interface preferences live in `OnyxUI/settings.json`, separate from configs on
-purpose: a config is your script's state, these are the interface's. **Auto
-save** writes the named config whenever a flagged value changes, debounced so
-dragging a slider writes once. **Auto load** restores that config the next time
-the script runs.
+purpose: a config is your script's state, these are the interface's. See
+[Flags and configuration](#flags-and-configuration) for how auto save and auto
+load behave.
 
 ```lua
 Onyx.Settings          -- { AutoSave, AutoLoad, Config, NotificationCorner, Accent }
@@ -177,10 +177,7 @@ Onyx:SaveSettings()
 Onyx:ApplyAutoLoad()   -- normally automatic; call it yourself if you build async
 ```
 
-Auto-load cannot run inside `CreateWindow` — the elements it restores do not
-exist yet — so it is deferred until the calling script has finished building
-the interface. If your script creates elements asynchronously (after a `wait`,
-inside a coroutine), call `Onyx:ApplyAutoLoad()` yourself once they exist.
+`AutoLoad` and `Config` are maps keyed by game, not single values.
 
 ---
 
@@ -752,20 +749,80 @@ Onyx:SetFlag("Aimbot", true) -- drives the element, fires its callback
 Onyx:GetOption("Aimbot")     -- the element object itself
 ```
 
-Configs are JSON files under `Onyx.Folder` (default `OnyxUI/configs`) and need
-executor file IO (`writefile` / `readfile` / `isfile`).
+Configs are JSON files needing executor file IO (`writefile` / `readfile` /
+`isfile`), and they are **filed per game**:
+
+```
+OnyxUI/
+  settings.json                        interface preferences, shared
+  configs/
+    place_1234567/                     one folder per game
+      default.json
+      pvp.json
+    place_9999999/
+      default.json
+```
 
 ```lua
-Onyx:SaveConfig("default")   -- returns ok, err
-Onyx:LoadConfig("default")
-Onyx:DeleteConfig("default")
-Onyx:ListConfigs()           -- array of names
+Onyx:SaveConfig("pvp")       -- returns ok, err
+Onyx:LoadConfig("pvp")
+Onyx:DeleteConfig("pvp")
+Onyx:ListConfigs()           -- names saved for THIS game
 
 Onyx:GetConfig()             -- serialisable table, no file IO needed
 Onyx:LoadConfigTable(tbl)
 ```
 
 `Color3` and `EnumItem` values (colours, keybinds) survive the round trip.
+
+### Not getting them confused
+
+Two things keep one game's loadout out of another's:
+
+1. **Separate folders.** `ListConfigs`, `SaveConfig` and `LoadConfig` only ever
+   look in the current game's folder, so a name that exists in two games is two
+   different files.
+2. **A stamp inside each file.** Every config records the PlaceId and GameId it
+   was written in, and `LoadConfig` refuses one whose stamp does not match the
+   game you are in — so a file copied between folders by hand is caught too.
+
+What counts as "this game" is the scope:
+
+```lua
+Onyx:SetConfigScope("place")      -- default: PlaceId, the level you are in
+Onyx:SetConfigScope("universe")   -- GameId, shared by every place in one experience
+Onyx:SetConfigScope("global")     -- one set of configs for everything
+Onyx:GameKey()                    -- "place_1234567"
+```
+
+Use `universe` when a lobby and its arena should share one config. Set the
+scope before creating the window, since it decides where everything is read
+from.
+
+A config written by an older build carries no stamp and is still loaded.
+
+### Auto load
+
+Auto load points at one named config per game, so it is set and cleared rather
+than toggled — a toggle cannot say *which* config it means. In the settings
+page that is the **Auto load this** / **No auto load** pair; in code:
+
+```lua
+Onyx:SetAutoLoad("pvp")    -- false, err if "pvp" is not saved yet
+Onyx:GetAutoLoad()         -- "pvp", or nil
+Onyx:ClearAutoLoad()
+```
+
+It runs once per session, deferred until the calling script has finished
+building its elements (auto load cannot run inside `CreateWindow` — the
+elements it restores do not exist yet). A script that builds asynchronously
+should call `Onyx:ApplyAutoLoad()` itself once its elements exist. Deleting the
+config that auto load points at clears the pointer.
+
+**Auto save** writes whenever a flagged value changes, debounced so dragging a
+slider writes once. It targets the config you are *working in* — the last one
+saved or loaded — not the auto load pointer, so building a new config never
+overwrites your startup one.
 
 ## Interaction focus
 

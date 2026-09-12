@@ -165,6 +165,11 @@ Window:Minimize(false)
 MOCK.step(0.5)
 assert(Window.Minimized == false)
 
+-- creating a window schedules the auto load pass, which runs once the calling
+-- script has finished building its elements
+MOCK.step(1)
+assert(Onyx.Ready == true, "the deferred auto load pass should have run")
+
 -- notifications
 local toast = Onyx:Notify({ Title = "Loaded", Content = "Everything is fine.", Duration = 1, Type = "success" })
 assert(toast and toast.Instance, "notification failed")
@@ -205,6 +210,10 @@ assert(typeof(Onyx.Flags.boxcolor) == "Color3", "config did not restore colour")
 
 local list = Onyx:ListConfigs()
 assert(#list == 1 and list[1] == "test", "ListConfigs wrong")
+
+-- configs are filed under the current game, not in one shared folder
+assert(MOCK.files["OnyxUI/configs/place_1234567/test.json"],
+	"a config should be written under its game key")
 
 -- flag helpers
 Onyx:SetFlag("aimbot", false)
@@ -556,8 +565,14 @@ assert(MOCK.files["OnyxUI/settings.json"], "settings should be written to disk")
 autoSaveRow.MouseButton1Click:Fire()
 assert(Onyx.Settings.AutoSave == false, "toggling back should clear it")
 
-local autoLoadRow = findRow(Window.SettingsPage, "Toggle", "Auto load")
-assert(autoLoadRow, "settings should offer an auto load toggle")
+-- auto load is set and cleared by name, not toggled
+local setAutoRow = findRow(Window.SettingsPage, "Button", "Auto load this")
+local clearAutoRow = findRow(Window.SettingsPage, "Button", "No auto load")
+assert(setAutoRow and clearAutoRow, "settings should offer set and clear auto load buttons")
+assert(setAutoRow.Parent == clearAutoRow.Parent and setAutoRow.Parent.Name == "Pair",
+	"the two auto load buttons should sit side by side")
+assert(findRow(Window.SettingsPage, "Toggle", "Auto load") == nil,
+	"the auto load toggle should be gone")
 
 -- scripts can add their own settings sections
 local custom = Window:SettingsSection("Script")
@@ -580,16 +595,108 @@ Window:CloseSettings()
 MOCK.step(0.5)
 
 --------------------------------------------------------------------
--- auto load restores a config on demand
+-- auto load points at one config, per game
 --------------------------------------------------------------------
-Onyx.Settings.AutoLoad = true
-Onyx.Settings.Config = "test"
+assert(Onyx:GetAutoLoad() == nil, "nothing should auto load by default")
+
+-- it has to name a config that exists
+local refused, refusedErr = Onyx:SetAutoLoad("never-saved")
+assert(refused == false and tostring(refusedErr):find("first"),
+	"setting auto load to an unsaved config should refuse")
+
+assert(Onyx:SetAutoLoad("test") == true, "setting auto load to a saved config should work")
+assert(Onyx:GetAutoLoad() == "test", "the pointer should stick")
+
 tog:Set(false)
 sld:Set(3)
+Onyx.AutoLoaded = false
 local applied = Onyx:ApplyAutoLoad()
 assert(applied == true, "ApplyAutoLoad should report success")
-assert(tog:Get() == true and sld:Get() == 72, "auto load should restore the saved config")
-Onyx.Settings.AutoLoad = false
+assert(tog:Get() == true and sld:Get() == 72, "auto load should restore the named config")
+
+-- and only once per session, so a second window cannot undo the user's edits
+tog:Set(false)
+assert(Onyx:ApplyAutoLoad() == false, "auto load should not run twice")
+assert(tog:Get() == false, "a second call must not restore anything")
+Onyx.AutoLoaded = false
+
+--------------------------------------------------------------------
+-- games do not share configs or auto load pointers
+--------------------------------------------------------------------
+local homePlace = game.PlaceId
+game.PlaceId = 9999999          -- pretend we joined somewhere else
+
+assert(Onyx:GameKey() == "place_9999999", "the game key should follow the place")
+assert(#Onyx:ListConfigs() == 0, "another game should see none of our configs")
+assert(Onyx:GetAutoLoad() == nil, "another game should have its own auto load pointer")
+
+local missing, missingErr = Onyx:LoadConfig("test")
+assert(missing == false, "a config from another game must not load")
+assert(tostring(missingErr):find("this game"), "and should say why: " .. tostring(missingErr))
+
+-- save one here and check the two stay apart
+tog:Set(false)
+assert(Onyx:SaveConfig("elsewhere") == true, "saving in another game should work")
+assert(Onyx:SetAutoLoad("elsewhere") == true, "and it can be the auto load here")
+assert(MOCK.files["OnyxUI/configs/place_9999999/elsewhere.json"], "written under the new game key")
+
+game.PlaceId = homePlace
+assert(Onyx:GetAutoLoad() == "test", "coming back should restore this game's pointer")
+local elsewhereList = Onyx:ListConfigs()
+assert(#elsewhereList == 1 and elsewhereList[1] == "test",
+	"and this game should only see its own configs")
+
+--------------------------------------------------------------------
+-- a config carrying another game's stamp is refused
+--------------------------------------------------------------------
+local HttpService = game:GetService("HttpService")
+local smuggled = HttpService:JSONDecode(MOCK.files["OnyxUI/configs/place_9999999/elsewhere.json"])
+assert(smuggled.__onyx, "configs should be stamped with where they were saved")
+assert(smuggled.__onyx.PlaceId == 9999999, "the stamp should record the place")
+
+-- drop it into this game's folder by hand, the way copying a file would
+MOCK.files["OnyxUI/configs/place_1234567/smuggled.json"] =
+	HttpService:JSONEncode(smuggled)
+
+local blocked, blockedErr = Onyx:LoadConfig("smuggled")
+assert(blocked == false, "a config stamped for another game must not load")
+assert(tostring(blockedErr):find("different game"), "and should say why")
+
+-- an unstamped config (written by an older build) is still trusted
+MOCK.files["OnyxUI/configs/place_1234567/legacy.json"] = HttpService:JSONEncode({ aimbot = true })
+assert(Onyx:LoadConfig("legacy") == true, "an unstamped config should still load")
+
+--------------------------------------------------------------------
+-- deleting the auto load config clears the pointer
+--------------------------------------------------------------------
+Onyx:SaveConfig("temp")
+assert(Onyx:SetAutoLoad("temp") == true)
+Onyx:DeleteConfig("temp")
+assert(Onyx:GetAutoLoad() == nil, "deleting the auto load config should clear the pointer")
+
+Onyx:SetAutoLoad("test")
+assert(Onyx:GetAutoLoad() == "test", "restore the pointer for the rest of the suite")
+Onyx:ClearAutoLoad()
+assert(Onyx:GetAutoLoad() == nil, "ClearAutoLoad should empty it")
+
+-- the pointer survives a settings round trip
+Onyx:SetAutoLoad("test")
+Onyx:SaveSettings()
+Onyx.Settings.AutoLoad = {}
+Onyx:LoadSettings()
+assert(Onyx:GetAutoLoad() == "test", "the pointer should persist to disk")
+
+-- auto save writes to the config being worked in, not the startup pointer
+Onyx:SaveConfig("working")
+assert(Onyx:GetLastConfig() == "working", "saving should become the working config")
+Onyx.Settings.AutoSave = true
+tog:Set(false)
+MOCK.step(3)
+Onyx.Settings.AutoSave = false
+assert(MOCK.files["OnyxUI/configs/place_1234567/working.json"], "auto save should write the working config")
+local stillAuto = HttpService:JSONDecode(MOCK.files["OnyxUI/configs/place_1234567/test.json"])
+assert(stillAuto.aimbot == true, "and must not overwrite the auto load config")
+Onyx:DeleteConfig("working")
 
 --------------------------------------------------------------------
 -- Terminal: commands in, outcomes out

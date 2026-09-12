@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.1.0
+	  ONYX UI  ·  v1.2.0
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.1.0",
+	Version     = "1.2.0",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -50,6 +50,7 @@ local Onyx = {
 	Connections = {},          -- tracked RBXScriptConnections
 	Focus       = nil,         -- element currently owning the pointer
 	Ready       = false,       -- set once the calling script has built its UI
+	AutoLoaded  = false,       -- auto load runs at most once a session
 	Teardown    = {},          -- internal cleanup run before Unload destroys the GUI
 	AccentBound = {},          -- { {Instance, propertyName}, ... }
 
@@ -2079,18 +2080,23 @@ function Onyx.CreateWindow(a, b)
 			})
 		end
 
+		Configs:Label({ Title = function()
+			local auto = Onyx.GetAutoLoad()
+			return "This game: " .. Onyx.GameKey()
+				.. "   \u{00B7}   auto load: " .. (auto or "off")
+		end, Interval = 0.5 })
+
 		local nameInput = Configs:Input({
 			Title = "Config name", Placeholder = "default",
-			Default = Onyx.Settings.Config or "default",
+			Default = Onyx.GetLastConfig(),
 			Callback = function(text)
-				Onyx.Settings.Config = (text ~= "" and text) or "default"
-				Onyx.SaveSettings()
+				Onyx.SetLastConfig((text ~= "" and text) or "default")
 			end,
 		})
 
 		local configList = Configs:Dropdown({
 			Title = "Saved configs", Values = Onyx.ListConfigs(), Search = true,
-			Default = Onyx.Settings.Config,
+			Default = Onyx.GetLastConfig(),
 			Callback = function(name)
 				if name then nameInput.Set(name) end
 			end,
@@ -2137,20 +2143,42 @@ function Onyx.CreateWindow(a, b)
 
 		Configs:Button({ Title = "Refresh list", Mini = true, Callback = refreshList })
 
-		Configs:Toggle({
-			Title = "Auto save", Mini = true, Default = Onyx.Settings.AutoSave,
-			Tooltip = "Write the config whenever a value changes",
-			Callback = function(state)
-				Onyx.Settings.AutoSave = state
-				Onyx.SaveSettings()
+		-- Auto load is a pointer at one config, not a mode, so it is set and
+		-- cleared rather than toggled: a toggle cannot say which config it means.
+		Configs:Button({
+			Title = "Auto load this", Mini = true,
+			Tooltip = "Load this config automatically in this game",
+			Callback = function()
+				local target = targetConfig()
+				local ok, err = Onyx.SetAutoLoad(Onyx, target)
+				Onyx.Notify({
+					Title = ok and "Auto load set" or "Could not set auto load",
+					Content = ok and (target .. " will load in this game") or tostring(err),
+					Type = ok and "success" or "error",
+				})
+			end,
+		})
+
+		Configs:Button({
+			Title = "No auto load", Mini = true,
+			Tooltip = "Stop loading a config automatically in this game",
+			Callback = function()
+				local had = Onyx.GetAutoLoad()
+				Onyx.ClearAutoLoad()
+				Onyx.Notify({
+					Title = "Auto load cleared",
+					Content = had and ("no longer loading " .. had) or "nothing was set",
+					Type = "warning",
+				})
 			end,
 		})
 
 		Configs:Toggle({
-			Title = "Auto load", Mini = true, Default = Onyx.Settings.AutoLoad,
-			Tooltip = "Restore this config the next time the script runs",
+			Title = "Auto save",
+			Description = "Write the config whenever a value changes.",
+			Default = Onyx.Settings.AutoSave,
 			Callback = function(state)
-				Onyx.Settings.AutoLoad = state
+				Onyx.Settings.AutoSave = state
 				Onyx.SaveSettings()
 			end,
 		})
@@ -6198,7 +6226,60 @@ Onyx.HasFileIO = HasFileIO
 
 local function EnsureFolder(path)
 	if typeof(isfolder) ~= "function" or typeof(makefolder) ~= "function" then return end
-	if not isfolder(path) then makefolder(path) end
+	-- makefolder will not create intermediate levels, so walk down
+	local walked = nil
+	for segment in tostring(path):gmatch("[^/]+") do
+		walked = walked and (walked .. "/" .. segment) or segment
+		if not isfolder(walked) then makefolder(walked) end
+	end
+end
+
+-- ================================================================
+--  GAME IDENTITY
+-- ================================================================
+--
+--  Configs are filed per game, so a loadout saved in one experience can never
+--  be restored into another. "place" keys on PlaceId, which is the level you
+--  are standing in; "universe" keys on GameId, which is shared by every place
+--  in one experience (a lobby and its arena share a config); "global" keys on
+--  nothing, which is the old behaviour.
+
+Onyx.ConfigScope = "place"
+
+local function PlaceId()
+	local ok, id = pcall(function() return game.PlaceId end)
+	return (ok and tonumber(id)) or 0
+end
+
+local function UniverseId()
+	local ok, id = pcall(function() return game.GameId end)
+	return (ok and tonumber(id)) or 0
+end
+
+function Onyx.GameKey()
+	local scope = Onyx.ConfigScope
+	if scope == "global" then return "global" end
+	if scope == "universe" then return "universe_" .. UniverseId() end
+	return "place_" .. PlaceId()
+end
+
+function Onyx.SetConfigScope(a, b)
+	local scope = b
+	if a ~= Onyx then scope = a end
+	scope = tostring(scope or "place"):lower()
+	if scope ~= "place" and scope ~= "universe" and scope ~= "global" then
+		return false, "scope must be place, universe or global"
+	end
+	Onyx.ConfigScope = scope
+	return true
+end
+
+local function ConfigDir()
+	return Onyx.Folder .. "/configs/" .. Onyx.GameKey()
+end
+
+local function ConfigPath(name)
+	return ConfigDir() .. "/" .. name .. ".json"
 end
 
 local function Serialize(value)
@@ -6244,13 +6325,41 @@ function Onyx.GetConfig()
 	return data
 end
 
+-- reserved key holding where and when a config was written
+local CONFIG_STAMP = "__onyx"
+
+local function StampConfig()
+	return {
+		PlaceId  = PlaceId(),
+		GameId   = UniverseId(),
+		Scope    = Onyx.ConfigScope,
+		Version  = Onyx.Version,
+		SavedAt  = os.time(),
+	}
+end
+
+-- A config filed under the wrong game would silently apply values meant for
+-- somewhere else, so the stamp is checked before anything is restored.
+local function StampMatches(stamp)
+	if typeof(stamp) ~= "table" then return true end          -- unstamped: trust it
+	if Onyx.ConfigScope == "global" then return true end
+
+	if Onyx.ConfigScope == "universe" then
+		local saved = tonumber(stamp.GameId)
+		return saved == nil or saved == 0 or saved == UniverseId()
+	end
+
+	local saved = tonumber(stamp.PlaceId)
+	return saved == nil or saved == 0 or saved == PlaceId()
+end
+
 function Onyx.LoadConfigTable(a, b)
 	local data = b
 	if a ~= Onyx then data = a end
 	if typeof(data) ~= "table" then return false, "config is not a table" end
 
 	for flag, raw in pairs(data) do
-		local element = Onyx.Options[flag]
+		local element = flag ~= CONFIG_STAMP and Onyx.Options[flag] or nil
 		if element and element.Set then
 			local value = Deserialize(raw)
 			if element.Type == "Colorpicker" then
@@ -6270,14 +6379,18 @@ function Onyx.SaveConfig(a, b)
 
 	if not HasFileIO then return false, "no file IO in this environment" end
 
-	EnsureFolder(Onyx.Folder)
-	EnsureFolder(Onyx.Folder .. "/configs")
+	EnsureFolder(ConfigDir())
 
-	local ok, encoded = pcall(HttpService.JSONEncode, HttpService, Onyx.GetConfig())
+	local payload = Onyx.GetConfig()
+	payload[CONFIG_STAMP] = StampConfig()
+
+	local ok, encoded = pcall(HttpService.JSONEncode, HttpService, payload)
 	if not ok then return false, "failed to encode config" end
 
-	local ok2, err = pcall(writefile, Onyx.Folder .. "/configs/" .. name .. ".json", encoded)
+	local ok2, err = pcall(writefile, ConfigPath(name), encoded)
 	if not ok2 then return false, tostring(err) end
+
+	Onyx.SetLastConfig(name)
 	return true
 end
 
@@ -6288,8 +6401,8 @@ function Onyx.LoadConfig(a, b)
 
 	if not HasFileIO then return false, "no file IO in this environment" end
 
-	local path = Onyx.Folder .. "/configs/" .. name .. ".json"
-	if not isfile(path) then return false, "config does not exist" end
+	local path = ConfigPath(name)
+	if not isfile(path) then return false, "no config named \"" .. name .. "\" for this game" end
 
 	local ok, contents = pcall(readfile, path)
 	if not ok then return false, "failed to read config" end
@@ -6297,7 +6410,13 @@ function Onyx.LoadConfig(a, b)
 	local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, contents)
 	if not ok2 then return false, "config is not valid JSON" end
 
-	return Onyx.LoadConfigTable(decoded)
+	if not StampMatches(decoded[CONFIG_STAMP]) then
+		return false, "that config was saved in a different game"
+	end
+
+	local applied, err = Onyx.LoadConfigTable(decoded)
+	if applied then Onyx.SetLastConfig(name) end
+	return applied, err
 end
 
 function Onyx.DeleteConfig(a, b)
@@ -6306,16 +6425,18 @@ function Onyx.DeleteConfig(a, b)
 	name = tostring(name or "default")
 
 	if not HasFileIO or typeof(delfile) ~= "function" then return false, "no file IO in this environment" end
-	local path = Onyx.Folder .. "/configs/" .. name .. ".json"
-	if not isfile(path) then return false, "config does not exist" end
+	local path = ConfigPath(name)
+	if not isfile(path) then return false, "no config named \"" .. name .. "\" for this game" end
+
 	local ok, err = pcall(delfile, path)
+	if ok and Onyx.GetAutoLoad() == name then Onyx.ClearAutoLoad() end
 	return ok, err
 end
 
 function Onyx.ListConfigs()
 	local out = {}
 	if typeof(listfiles) ~= "function" or typeof(isfolder) ~= "function" then return out end
-	local dir = Onyx.Folder .. "/configs"
+	local dir = ConfigDir()
 	if not isfolder(dir) then return out end
 	local ok, files = pcall(listfiles, dir)
 	if not ok then return out end
@@ -6335,13 +6456,66 @@ end
 --  Kept separate from configs on purpose: a config is your script's state,
 --  these are the interface's.
 
+--  AutoLoad and Config are keyed by game: each place remembers its own
+--  startup config and its own last-used name, so switching games never
+--  restores the wrong loadout.
+
 Onyx.Settings = {
 	AutoSave           = false,
-	AutoLoad           = false,
-	Config             = "default",
+	AutoLoad           = {},   -- gameKey -> config name
+	Config             = {},   -- gameKey -> last used name
 	NotificationCorner = "bottom-right",
 	Accent             = nil,
 }
+
+-- which config this game starts with, if any
+function Onyx.GetAutoLoad()
+	local map = Onyx.Settings.AutoLoad
+	if typeof(map) ~= "table" then return nil end
+	return map[Onyx.GameKey()]
+end
+
+function Onyx.SetAutoLoad(a, b)
+	local name = b
+	if a ~= Onyx then name = a end
+
+	if typeof(Onyx.Settings.AutoLoad) ~= "table" then Onyx.Settings.AutoLoad = {} end
+
+	if name == nil or name == "" then
+		Onyx.Settings.AutoLoad[Onyx.GameKey()] = nil
+		Onyx.SaveSettings()
+		return true
+	end
+
+	name = tostring(name)
+	if Onyx.HasFileIO and not isfile(ConfigPath(name)) then
+		return false, "save \"" .. name .. "\" first"
+	end
+
+	Onyx.Settings.AutoLoad[Onyx.GameKey()] = name
+	Onyx.SaveSettings()
+	return true
+end
+
+function Onyx.ClearAutoLoad()
+	return Onyx.SetAutoLoad(Onyx, nil)
+end
+
+-- the name the config box should show when this game is opened again
+function Onyx.GetLastConfig()
+	local map = Onyx.Settings.Config
+	if typeof(map) ~= "table" then return "default" end
+	return map[Onyx.GameKey()] or "default"
+end
+
+function Onyx.SetLastConfig(a, b)
+	local name = b
+	if a ~= Onyx then name = a end
+	if typeof(Onyx.Settings.Config) ~= "table" then Onyx.Settings.Config = {} end
+	Onyx.Settings.Config[Onyx.GameKey()] = tostring(name or "default")
+	Onyx.SaveSettings()
+	return true
+end
 
 local function SettingsPath()
 	return Onyx.Folder .. "/settings.json"
@@ -6353,8 +6527,8 @@ function Onyx.SaveSettings()
 
 	local payload = {
 		AutoSave           = Onyx.Settings.AutoSave and true or false,
-		AutoLoad           = Onyx.Settings.AutoLoad and true or false,
-		Config             = tostring(Onyx.Settings.Config or "default"),
+		AutoLoad           = typeof(Onyx.Settings.AutoLoad) == "table" and Onyx.Settings.AutoLoad or {},
+		Config             = typeof(Onyx.Settings.Config) == "table" and Onyx.Settings.Config or {},
 		NotificationCorner = tostring(Onyx.Settings.NotificationCorner or "bottom-right"),
 	}
 	if typeof(Onyx.Settings.Accent) == "Color3" then
@@ -6377,8 +6551,11 @@ function Onyx.LoadSettings()
 	if not ok2 or typeof(decoded) ~= "table" then return Onyx.Settings end
 
 	Onyx.Settings.AutoSave = decoded.AutoSave and true or false
-	Onyx.Settings.AutoLoad = decoded.AutoLoad and true or false
-	if decoded.Config then Onyx.Settings.Config = tostring(decoded.Config) end
+
+	-- these were a bool and a string before configs were filed per game;
+	-- anything but a table is from that layout and is dropped
+	Onyx.Settings.AutoLoad = typeof(decoded.AutoLoad) == "table" and decoded.AutoLoad or {}
+	Onyx.Settings.Config   = typeof(decoded.Config) == "table" and decoded.Config or {}
 	if decoded.NotificationCorner then
 		Onyx.Settings.NotificationCorner = tostring(decoded.NotificationCorner)
 	end
@@ -6400,7 +6577,11 @@ function Onyx._FlagChanged()
 	task.delay(1.5, function()
 		autoSaveQueued = false
 		if not Onyx.Settings.AutoSave then return end
-		Onyx.SaveConfig(Onyx.Settings.Config or "default")
+		-- the config being worked in, not the auto load pointer: saving over
+		-- the startup config while the user is building a different one would
+		-- lose it. Auto loading updates "last" anyway, so the common case
+		-- still writes where you would expect.
+		Onyx.SaveConfig(Onyx.GetLastConfig())
 	end)
 end
 
@@ -6409,8 +6590,25 @@ end
 -- the interface. A script that builds asynchronously can call it by hand.
 function Onyx.ApplyAutoLoad()
 	Onyx.Ready = true
-	if not Onyx.Settings.AutoLoad or not HasFileIO then return false end
-	return Onyx.LoadConfig(Onyx.Settings.Config or "default")
+	if Onyx.AutoLoaded then return false, "already applied this session" end
+
+	local name = Onyx.GetAutoLoad()
+	if not name then return false, "no auto load set for this game" end
+	if not HasFileIO then return false, "no file IO in this environment" end
+
+	Onyx.AutoLoaded = true
+	local ok, err = Onyx.LoadConfig(name)
+
+	if ok then
+		Onyx.Notify({
+			Title = "Config loaded", Content = name, Type = "success", Duration = 3,
+		})
+	else
+		Onyx.Notify({
+			Title = "Auto load failed", Content = tostring(err), Type = "error", Duration = 5,
+		})
+	end
+	return ok, err
 end
 
 Onyx.LoadSettings()

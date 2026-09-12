@@ -625,6 +625,8 @@ Gui._methods.GetGuiInset = function() return vec2(0, 36), vec2(0, 0) end
 service("TextService")
 
 game = Instance.new("DataModel")
+game.PlaceId = 1234567
+game.GameId = 7654321
 game._methods.GetService = function(_, name)
 	if not services[name] then services[name] = Instance.new(name) end
 	return services[name]
@@ -644,8 +646,12 @@ function isfolder(path) return folders[path] == true end
 function makefolder(path) folders[path] = true end
 function listfiles(dir)
 	local out = {}
+	local prefix = dir .. "/"
 	for path in pairs(files) do
-		if path:sub(1, #dir + 1) == dir .. "/" then table.insert(out, path) end
+		if path:sub(1, #prefix) == prefix then
+			local rest = path:sub(#prefix + 1)
+			if not rest:find("/") then table.insert(out, path) end
+		end
 	end
 	return out
 end
