@@ -107,6 +107,17 @@ local Tab = Window:CreateTab({
 })
 
 local Section = Tab:CreateSection("ESP")
+
+-- option-heavy tabs can fold sections away
+local Advanced = Tab:CreateSection({
+    Title       = "Advanced",
+    Collapsible = true,
+    Collapsed   = false,       -- start folded
+    OnCollapse  = function(folded) end,
+})
+
+Advanced:SetCollapsed(true)
+Advanced:Toggle()
 ```
 
 `Icon` accepts a numeric asset id, an `rbxassetid://` string, or a single
@@ -178,8 +189,10 @@ Section:Button({ Title = "Release", Mini = true })
 
 They pair up in creation order, two to a row, and the pair can mix types — a
 mini button next to a mini toggle is fine. **Button, Toggle, Keybind and
-Colorpicker** can be mini. Slider, Dropdown, Input, Console, Paragraph, Label
-and Divider need the full width and ignore `Mini`.
+Colorpicker** can be mini. Everything else — Slider, RangeSlider, Segmented,
+Dropdown, Input, Textarea, Tags, Table, PlayerList, Stats, Progress, Graph,
+Console, Terminal, Paragraph, Label and Divider — needs the full width and
+ignores `Mini`.
 
 Anything full width closes the open pair, so a slider between two minis keeps
 them on separate rows. `Section:Break()` abandons a half-filled row on demand
@@ -349,6 +362,256 @@ console:SetAutoScroll(false)
 Auto-scroll sticks to the newest line only while you are already at the
 bottom, so scrolling up to read something is not yanked back by the next line.
 
+### Terminal
+
+A command line, not a log. Only what a command produced shows up: the line you
+ran, then its result or its error. Ordinary chatter belongs in a Console, which
+is why this deliberately has no `Log` / `Info` / `Warn`.
+
+```lua
+local term = Section:Terminal({
+    Title  = "Console",
+    Height = 150,
+    Prefix = ">",
+})
+
+term:Register("speed", {
+    Description = "set walk speed",
+    Usage       = "speed <n>",
+    Callback    = function(args, raw)
+        local value = tonumber(args[1])
+        if not value then return false, "speed needs a number" end
+        humanoid.WalkSpeed = value
+        return "walk speed is now " .. value
+    end,
+})
+```
+
+What a command callback returns decides what is shown:
+
+| Return | Shown |
+| --- | --- |
+| a string | that string, as the outcome |
+| `true` | `ok` |
+| `false, "reason"` | `reason`, as an error |
+| `nil` | nothing beyond the echoed command |
+| it errors | the error, caught and shown in red |
+
+`help` and `clear` are built in unless you register your own. Up and down
+recall history. Unknown commands error unless you pass an `Unknown` handler.
+
+```lua
+term:Run("speed 50")     -- run one programmatically
+term:Result("done")      -- push an outcome by hand
+term:Error("failed")
+term:Unregister("speed")
+term:Clear()
+term:GetText()
+```
+
+### Segmented
+
+A visible one-of-N choice, for a mode you want readable at a glance rather
+than one click away in a dropdown.
+
+```lua
+Section:Segmented({
+    Title    = "Mode",
+    Values   = { "Legit", "Semi", "Rage" },
+    Default  = "Legit",        -- by value, or an index
+    Flag     = "AimMode",
+    Callback = function(value, index) end,
+})
+```
+
+`:Set(value)` takes a value or an index; `:Get()` returns both.
+
+### RangeSlider
+
+Two handles on one track, for a span rather than a point. Whichever handle is
+nearer the press takes the drag, and a reversed pair is corrected.
+
+```lua
+local range = Section:RangeSlider({
+    Title      = "Target distance",
+    Min        = 0,
+    Max        = 1000,
+    DefaultMin = 50,
+    DefaultMax = 600,
+    Increment  = 10,
+    Suffix     = "m",
+    Flag       = "TargetRange",   -- stored as { low, high }
+    Callback   = function(low, high) end,
+})
+
+range:Set(100, 400)
+local low, high = range:Get()
+```
+
+### Textarea
+
+Multi-line input, for a webhook body, a list of names, or a snippet. `Input`
+stays single-line.
+
+```lua
+local area = Section:Textarea({
+    Title       = "Webhook body",
+    Height      = 110,
+    Placeholder = "one entry per line",
+    Monospace   = true,
+    Live        = false,        -- fire on every keystroke
+    Flag        = "WebhookBody",
+})
+
+area:GetLines()     -- split on newlines, blanks dropped
+area:SetHeight(160)
+```
+
+### Tags
+
+Add and remove arbitrary strings as chips — a blacklist, a keyword filter.
+A multi-select Dropdown only picks from a fixed list; this accepts anything
+typed.
+
+```lua
+local tags = Section:Tags({
+    Title       = "Ignore names",
+    Placeholder = "add and press enter",
+    Default     = { "friend1" },
+    Max         = 64,
+    Flag        = "IgnoreNames",   -- stored as an array
+    Callback    = function(list) end,
+})
+
+tags:Add("someone")     -- false if duplicate, blank, or over Max
+tags:Remove("friend1")
+tags:Has("someone")
+tags:Set({ "a", "b" })
+tags:Clear()
+```
+
+Chips wrap by hand from their measured widths: `UIListLayout` only gained
+wrapping recently and not every client running this has it.
+
+### Table
+
+A scrolling list built from a data array, with optional columns, per-row
+action buttons and selection.
+
+```lua
+local drops = Section:Table({
+    Title    = "Recent drops",
+    Columns  = { { Title = "Item", Width = 0.5 }, "Rarity", "Value" },
+    Height   = 160,
+    RowHeight = 28,
+    MaxRows  = 500,
+    Empty    = "No drops yet.",
+    Actions  = { { Title = "Sell", Width = 46, Callback = function(row) end } },
+    OnSelect = function(row, index) end,
+})
+
+drops:SetRows({
+    { "Blade of Dawn", "Legendary", "12,400" },
+    { "Iron Shield",   "Common",    "80" },
+})
+
+local handle = drops:AddRow({ "Void Shard", "Rare", "3,150" })
+handle.Update({ "Void Shard", "Rare", "3,400" })
+handle.Remove()
+
+drops:Select(1)
+drops:GetSelected()     -- row data, index
+drops:Clear()
+```
+
+A column with an explicit `Width` (0–1) keeps that share; the rest split what
+is left. Rows can also be `{ Cells = {...}, Actions = {...}, Color = ... }` to
+override per row.
+
+### PlayerList
+
+The server's players, kept current through `PlayerAdded` and `PlayerRemoving`,
+with avatars, team colours and per-row actions.
+
+```lua
+local players = Section:PlayerList({
+    Title       = "Players",
+    Height      = 190,
+    Avatars     = true,
+    IgnoreLocal = false,
+    Filter      = function(player) return true end,
+    Actions = {
+        { Title = "TP",    Callback = function(player) end },
+        { Title = "Watch", Callback = function(player) end },
+    },
+    OnSelect = function(player) end,
+})
+
+players:Refresh()
+players:GetSelected()
+```
+
+A selection whose player has left the server clears itself.
+
+### Stats
+
+A row of KPI tiles. Values may be strings or functions; a function is polled
+like a live label, so a session counter needs no loop of its own.
+
+```lua
+Section:Stats({
+    Columns = 3,
+    Items = {
+        { Label = "Kills",  Value = function() return kills end },
+        { Label = "Coins",  Value = "120" },
+        { Label = "Uptime", Value = uptimeFn, Interval = 1 },
+    },
+})
+
+stats:Set("Coins", "500")    -- by label or index
+```
+
+### Progress
+
+```lua
+local bar = Section:Progress({
+    Title     = "Farm cycle",
+    Max       = 100,
+    Value     = 0,
+    ShowValue = true,
+    Format    = function(value, max) return value .. "/" .. max end,
+})
+
+bar:Set(40)
+bar:SetMax(200)
+bar:SetIndeterminate(true)   -- shuttles until you Set a value again
+```
+
+### Graph
+
+A sparkline drawn as columns rather than line segments, so it stays readable
+at any width without rotated geometry.
+
+```lua
+local fps = Section:Graph({
+    Title    = "Frames per second",
+    Height   = 80,
+    Points   = 48,          -- samples kept
+    Max      = "auto",      -- or a fixed ceiling
+    Suffix   = " fps",
+    Source   = function() return currentFps end,
+    Interval = 0.5,
+})
+
+fps:Push(60)
+fps:SetValues({ 30, 45, 60 })
+fps:Bind(function() return currentFps end, 0.25)
+fps:Unbind()
+fps:Clear()
+```
+
+With `Max = "auto"` the ceiling tracks the tallest sample in the window.
+
 ### Text, static or live
 
 ```lua
@@ -428,6 +691,23 @@ Window:Dialog({
         { Title = "Unload", Primary = true, Callback = function() Onyx:Unload() end },
     },
 })
+```
+
+## Loading overlay
+
+Covers the window body while a script is still getting ready. Unlike a toast it
+holds the pointer, so nothing half-initialised can be clicked.
+
+```lua
+local loader = Window:Loading({
+    Title   = "Onyx",
+    Content = "Connecting to the server",
+    Timeout = 30,        -- auto-close, optional
+})
+
+loader:SetStatus("loading configs")
+loader:SetProgress(0.4)   -- a number switches the bar from shuttling to measuring
+loader:Close()
 ```
 
 ## Watermark

@@ -343,9 +343,13 @@ end
 function warn(...)
 	local parts = {}
 	for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
-	print("[warn] " .. table.concat(parts, " "))
+	local message = table.concat(parts, " ")
+	-- a callback that yields is normal in Roblox; here it unwinds as the
+	-- sentinel, so do not report it as a failure
+	if message:find(YIELD, 1, true) then return end
+	print("[warn] " .. message)
 	M.warnings = M.warnings or {}
-	table.insert(M.warnings, table.concat(parts, " "))
+	table.insert(M.warnings, message)
 end
 
 --------------------------------------------------------------------
@@ -399,7 +403,31 @@ LocalPlayer.UserId = 1
 Instance.new("PlayerGui", LocalPlayer)
 Players.LocalPlayer = LocalPlayer
 Players._methods.GetUserThumbnailAsync = function() return "rbxassetid://0" end
-Players._methods.GetPlayers = function() return { LocalPlayer } end
+
+-- a small roster the PlayerList tests can add to and remove from
+local roster = { LocalPlayer }
+Players._methods.GetPlayers = function() return table.clone(roster) end
+Players.PlayerAdded = newSignal()
+Players.PlayerRemoving = newSignal()
+
+function M.addPlayer(name, displayName)
+	local player = Instance.new("Player")
+	player.Name = name
+	player.DisplayName = displayName or name
+	player.UserId = #roster + 1
+	table.insert(roster, player)
+	Players.PlayerAdded:Fire(player)
+	return player
+end
+
+function M.removePlayer(player)
+	for i, entry in ipairs(roster) do
+		if entry == player then table.remove(roster, i); break end
+	end
+	Players.PlayerRemoving:Fire(player)
+end
+
+M.roster = roster
 
 -- tiny JSON codec
 local function jsonEncode(value)

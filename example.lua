@@ -24,6 +24,7 @@ Onyx:Watermark({ Text = "Onyx", ShowFPS = true })
 local Main    = Window:CreateTab({ Title = "Main" })
 local Visuals = Window:CreateTab({ Title = "Visuals" })
 local Player  = Window:CreateTab({ Title = "Player" })
+local Advanced = Window:CreateTab({ Title = "Advanced" })
 local Debug   = Window:CreateTab({ Title = "Debug" })
 
 local Combat = Main:CreateSection("Combat")
@@ -171,6 +172,118 @@ Danger:Button({
 })
 
 --------------------------------------------------------------------
+-- Advanced
+--------------------------------------------------------------------
+local People = Advanced:CreateSection("Server")
+
+People:PlayerList({
+	Title   = "Players",
+	Height  = 170,
+	Actions = {
+		{ Title = "TP", Callback = function(player)
+			local character = player.Character
+			local target = character and character:FindFirstChild("HumanoidRootPart")
+			local me = game:GetService("Players").LocalPlayer.Character
+			local root = me and me:FindFirstChild("HumanoidRootPart")
+			if target and root then root.CFrame = target.CFrame end
+		end },
+		{ Title = "Watch", Callback = function(player)
+			workspace.CurrentCamera.CameraSubject = player.Character
+		end },
+	},
+	OnSelect = function(player)
+		Onyx:Notify({ Title = "Selected", Content = player.DisplayName, Duration = 2 })
+	end,
+})
+
+local Filters = Advanced:CreateSection("Filters")
+
+Filters:Segmented({
+	Title    = "Mode",
+	Values   = { "Legit", "Semi", "Rage" },
+	Default  = "Legit",
+	Flag     = "AimMode",
+})
+
+Filters:RangeSlider({
+	Title      = "Target distance",
+	Min        = 0,
+	Max        = 1000,
+	DefaultMin = 50,
+	DefaultMax = 600,
+	Increment  = 10,
+	Suffix     = "m",
+	Flag       = "TargetRange",
+})
+
+Filters:Tags({
+	Title       = "Ignore names",
+	Placeholder = "add and press enter",
+	Default     = { "friend1" },
+	Flag        = "IgnoreNames",
+})
+
+local Scores = Advanced:CreateSection({ Title = "Session", Collapsible = true })
+
+local kills, started = 0, os.clock()
+
+Scores:Stats({
+	Columns = 3,
+	Items = {
+		{ Label = "Kills",   Value = function() return kills end },
+		{ Label = "Uptime",  Value = function()
+			return string.format("%d:%02d", math.floor((os.clock() - started) / 60), math.floor((os.clock() - started) % 60))
+		end },
+		{ Label = "Players", Value = function()
+			return #game:GetService("Players"):GetPlayers()
+		end },
+	},
+})
+
+Scores:Graph({
+	Title    = "Frames per second",
+	Height   = 80,
+	Points   = 48,
+	Source   = function() return 1 / math.max(game:GetService("RunService").Heartbeat:Wait(), 1 / 240) end,
+	Interval = 0.5,
+	Suffix   = " fps",
+})
+
+local loadBar = Scores:Progress({ Title = "Farm cycle", Max = 100, Value = 0 })
+
+Scores:Button({ Title = "Run a cycle", Callback = function()
+	for step = 0, 100, 10 do
+		loadBar:Set(step)
+		task.wait(0.08)
+	end
+end })
+
+local Payload = Advanced:CreateSection({ Title = "Payload", Collapsible = true, Collapsed = true })
+
+Payload:Textarea({
+	Title       = "Webhook body",
+	Height      = 100,
+	Placeholder = "one entry per line",
+	Flag        = "WebhookBody",
+})
+
+local drops = Payload:Table({
+	Title   = "Recent drops",
+	Columns = { { Title = "Item", Width = 0.5 }, "Rarity", "Value" },
+	Height  = 140,
+	Empty   = "No drops yet.",
+	Actions = { { Title = "Sell", Callback = function(row)
+		Onyx:Notify({ Title = "Sold", Content = tostring(row[1]), Type = "success", Duration = 2 })
+	end } },
+})
+
+drops:SetRows({
+	{ "Blade of Dawn", "Legendary", "12,400" },
+	{ "Iron Shield",   "Common",    "80" },
+	{ "Void Shard",    "Rare",      "3,150" },
+})
+
+--------------------------------------------------------------------
 -- Debug
 --
 -- Config saving, the accent, the toggle key and the notification corner all
@@ -199,6 +312,43 @@ end })
 Onyx:GetOption("SilentAim").Callback = function(state)
 	console:Info("silent aim " .. (state and "on" or "off"))
 end
+
+local Cmd = Debug:CreateSection("Commands")
+
+local term = Cmd:Terminal({
+	Title  = "Console",
+	Height = 150,
+})
+
+term:Register("speed", {
+	Description = "set walk speed",
+	Usage       = "speed <n>",
+	Callback    = function(args)
+		local value = tonumber(args[1])
+		if not value then return false, "speed needs a number" end
+		local character = game:GetService("Players").LocalPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then return false, "no character" end
+		humanoid.WalkSpeed = value
+		return "walk speed is now " .. value
+	end,
+})
+
+term:Register("count", {
+	Description = "count players in the server",
+	Callback    = function()
+		return #game:GetService("Players"):GetPlayers() .. " players"
+	end,
+})
+
+term:Register("notify", {
+	Description = "send a test notification",
+	Usage       = "notify <text>",
+	Callback    = function(args)
+		Onyx:Notify({ Title = "Terminal", Content = table.concat(args, " ") })
+		return true
+	end,
+})
 
 local Toasts = Debug:CreateSection("Notifications")
 
@@ -232,6 +382,10 @@ Script:Button({ Title = "Servers", Mini = true, Callback = function() end })
 Script:Label({ Title = function()
 	return "Auto save is " .. (Onyx.Settings.AutoSave and "on" or "off")
 end })
+
+-- a loading overlay, closed once the script is ready
+local loader = Window:Loading({ Title = "Onyx", Content = "Setting things up" })
+task.delay(1.2, function() loader:Close() end)
 
 Onyx:Notify({
 	Title    = "Onyx loaded",

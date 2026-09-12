@@ -406,7 +406,7 @@ RS.Heartbeat:Fire(0.2)
 local console = Misc:Console({ Title = "Output", Height = 120, MaxLines = 3 })
 local screen = console.Instance:FindFirstChild("Screen")
 assert(screen, "console should have a screen")
-local placeholder = screen.Lines:FindFirstChild("Placeholder")
+local placeholder = screen.List:FindFirstChild("Placeholder")
 assert(placeholder and placeholder.Visible == true, "an empty console shows its placeholder")
 
 console:Log("hello", "world")
@@ -582,6 +582,342 @@ local applied = Onyx:ApplyAutoLoad()
 assert(applied == true, "ApplyAutoLoad should report success")
 assert(tog:Get() == true and sld:Get() == 72, "auto load should restore the saved config")
 Onyx.Settings.AutoLoad = false
+
+--------------------------------------------------------------------
+-- Terminal: commands in, outcomes out
+--------------------------------------------------------------------
+local Cmds = Visuals:CreateSection("Terminal")
+local term = Cmds:Terminal({ Title = "Commands", Height = 150, MaxLines = 50 })
+
+local ran = {}
+term:Register("echo", { Description = "repeat the arguments", Callback = function(args)
+	ran.echo = args
+	return table.concat(args, " ")
+end })
+term:Register("ok", function() return true end)
+term:Register("quiet", function() return nil end)
+term:Register("boom", function() error("exploded") end)
+term:Register("refuse", function() return false, "not allowed" end)
+
+term:Run("echo hello world")
+assert(#term.Entries == 2, "a command should produce an echo and an outcome")
+assert(term.Entries[1].Kind == "command" and term.Entries[1].Text == "echo hello world")
+assert(term.Entries[2].Kind == "result" and term.Entries[2].Text == "hello world")
+assert(ran.echo[1] == "hello" and ran.echo[2] == "world", "arguments should be split")
+
+term:Run("ok")
+assert(term.Entries[#term.Entries].Text == "ok", "returning true should read as ok")
+
+term:Run("quiet")
+assert(term.Entries[#term.Entries].Kind == "command",
+	"returning nil should leave only the echoed command")
+
+term:Run("boom")
+local boom = term.Entries[#term.Entries]
+assert(boom.Kind == "error" and boom.Text:find("exploded"), "an erroring command should be caught")
+
+term:Run("refuse")
+local refused = term.Entries[#term.Entries]
+assert(refused.Kind == "error" and refused.Text == "not allowed", "false plus a message is an error")
+
+term:Run("nonsense")
+assert(term.Entries[#term.Entries].Kind == "error", "unknown commands should error")
+assert(term.Entries[#term.Entries].Text:find("unknown command"), "and say so")
+
+term:Run("help")
+assert(#term.Entries > 0, "help should list something")
+
+-- there is deliberately no Log/Info: chatter belongs in a Console
+assert(term.Log == nil and term.Info == nil, "a terminal is not a log")
+
+term:Run("clear")
+assert(#term.Entries == 0, "the built-in clear should empty it")
+
+-- the input line runs what you type and keeps history
+term.Input.Text = "echo typed"
+term.Input.FocusLost:Fire(true)
+assert(term.Entries[1].Text == "echo typed", "the input line should run the command")
+assert(term.History[#term.History] == "echo typed", "typed commands should enter history")
+assert(term.Input.Text == "", "the input should clear after running")
+
+--------------------------------------------------------------------
+-- Table
+--------------------------------------------------------------------
+local Data = Visuals:CreateSection("Data")
+local hits = {}
+local tbl = Data:Table({
+	Title = "Targets",
+	Columns = { { Title = "Name", Width = 0.5 }, "Distance", "HP" },
+	Height = 150,
+	Actions = { { Title = "TP", Callback = function(data) hits.tp = data end } },
+	OnSelect = function(data, index) hits.selected = index end,
+})
+
+tbl:SetRows({ { "Bob", "42", "100" }, { "Alice", "13", "88" } })
+assert(#tbl.Rows == 2, "two rows expected")
+assert(tbl.Rows[1].Labels[1].Text == "Bob", "first cell should render")
+assert(tbl.Columns[1].Width == 0.5, "an explicit column width should be kept")
+assert(math.abs(tbl.Columns[2].Width - 0.25) < 1e-6, "the rest should split what is left")
+
+local added = tbl:AddRow({ "Carl", "7", "30" })
+assert(#tbl.Rows == 3, "AddRow should append")
+added.Update({ "Carl", "8", "30" })
+assert(tbl.Rows[3].Labels[2].Text == "8", "Update should rewrite cells")
+
+tbl:Select(2)
+assert(hits.selected == 2, "selecting should fire OnSelect")
+local selected = tbl:GetSelected()
+assert(selected[1] == "Alice", "GetSelected should return the row data")
+
+local tpButton
+for _, inst in ipairs(tbl.Rows[1].Instance:GetChildren()) do
+	if inst.ClassName == "TextButton" and inst.Text == "TP" then tpButton = inst end
+end
+assert(tpButton, "row actions should render")
+tpButton.MouseButton1Click:Fire()
+assert(hits.tp and hits.tp[1] == "Bob", "a row action should receive its row data")
+
+added.Remove()
+assert(#tbl.Rows == 2, "Remove should drop the row")
+tbl:Clear()
+assert(#tbl.Rows == 0, "Clear should empty the table")
+
+--------------------------------------------------------------------
+-- PlayerList
+--------------------------------------------------------------------
+local kicked
+local plist = Data:PlayerList({
+	Title = "Players", Height = 160,
+	Actions = { { Title = "TP", Callback = function(player) kicked = player.Name end } },
+})
+assert(#plist.Rows == 1, "the roster starts with the local player")
+
+local bob = MOCK.addPlayer("Bob", "Bobby")
+assert(#plist.Rows == 2, "PlayerAdded should refresh the list")
+
+local bobRow
+for _, row in ipairs(plist.Rows) do
+	if row.Player == bob then bobRow = row end
+end
+assert(bobRow, "the new player should have a row")
+assert(bobRow.NameLabel.Text == "Bobby", "rows should show the display name")
+
+plist:Select(bob)
+assert(plist:GetSelected() == bob, "selecting a player should stick")
+
+local tpBtn
+for _, inst in ipairs(bobRow.Instance:GetChildren()) do
+	if inst.ClassName == "TextButton" and inst.Text == "TP" then tpBtn = inst end
+end
+assert(tpBtn, "player rows should carry actions")
+tpBtn.MouseButton1Click:Fire()
+assert(kicked == "Bob", "a player action should receive the player")
+
+MOCK.removePlayer(bob)
+MOCK.step(0.1)
+assert(#plist.Rows == 1, "PlayerRemoving should refresh the list")
+assert(plist:GetSelected() == nil, "a selection that left the server should clear")
+
+--------------------------------------------------------------------
+-- Tags
+--------------------------------------------------------------------
+local tagged
+local tags = Data:Tags({
+	Title = "Blacklist", Default = { "bob" }, Flag = "Blacklist", Max = 3,
+	Callback = function(list) tagged = list end,
+})
+assert(#tags:Get() == 1, "defaults should seed the tags")
+assert(tags:Has("bob"), "Has should find a seeded tag")
+
+tags:Add("alice")
+assert(#tags:Get() == 2 and tagged[2] == "alice", "Add should append and fire")
+assert(tags:Add("alice") == false, "duplicates should be refused")
+assert(tags:Add("  ") == false, "blank tags should be refused")
+
+tags:Add("carl")
+assert(tags:Add("dave") == false, "Max should cap the list")
+
+tags:Remove("alice")
+assert(#tags:Get() == 2 and not tags:Has("alice"), "Remove should drop the tag")
+assert(Onyx.Flags.Blacklist and #Onyx.Flags.Blacklist == 2, "tags should publish to their flag")
+
+-- typing into the field adds one
+tags.Input.Text = "typed"
+tags.Input.FocusLost:Fire(true)
+assert(tags:Has("typed"), "typing a tag and pressing enter should add it")
+assert(tags.Input.Text == "", "the field should clear after adding")
+
+tags:Set({ "x", "y" })
+assert(#tags:Get() == 2 and tags:Has("x"), "Set should replace the whole list")
+tags:Clear()
+assert(#tags:Get() == 0, "Clear should empty it")
+
+--------------------------------------------------------------------
+-- Segmented
+--------------------------------------------------------------------
+local mode
+local seg = Data:Segmented({
+	Title = "Mode", Values = { "Legit", "Rage", "Silent" }, Default = "Legit",
+	Flag = "Mode", Callback = function(value) mode = value end,
+})
+assert(seg:Get() == "Legit", "default should apply")
+seg:Set("Rage")
+local value, index = seg:Get()
+assert(value == "Rage" and index == 2, "setting by name should work")
+assert(mode == "Rage" and Onyx.Flags.Mode == "Rage", "segmented should fire and publish")
+seg:Set(3)
+assert(seg:Get() == "Silent", "setting by index should work")
+seg:Set("nope")
+assert(seg:Get() == "Silent", "an unknown value should be ignored")
+
+local segTrack = seg.Instance:FindFirstChild("Track")
+local legitBtn = segTrack:FindFirstChild("Legit")
+assert(legitBtn, "each value should render a button")
+legitBtn.MouseButton1Click:Fire()
+assert(seg:Get() == "Legit", "clicking a segment should select it")
+
+--------------------------------------------------------------------
+-- RangeSlider
+--------------------------------------------------------------------
+local lowSeen, highSeen
+local range = Data:RangeSlider({
+	Title = "Level", Min = 0, Max = 100, DefaultMin = 20, DefaultMax = 60,
+	Increment = 5, Flag = "LevelRange",
+	Callback = function(low, high) lowSeen, highSeen = low, high end,
+})
+local low, high = range:Get()
+assert(low == 20 and high == 60, "range defaults should apply")
+
+range:Set(10, 90)
+low, high = range:Get()
+assert(low == 10 and high == 90, "Set should move both ends")
+assert(lowSeen == 10 and highSeen == 90, "the callback should see both ends")
+
+range:Set(80, 30)
+low, high = range:Get()
+assert(low == 30 and high == 80, "a reversed pair should be corrected")
+
+range:Set(7, 93)
+low, high = range:Get()
+assert(low == 5 and high == 95, "values should snap to the increment")
+assert(Onyx.Flags.LevelRange[1] == 5, "the range should publish as a pair")
+
+-- one range slider at a time, like the plain slider
+local rangeHit = range.Instance:FindFirstChild("Lane"):FindFirstChild("Hit")
+rangeHit.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(100, 0, 0) })
+assert(Onyx.Focus == range, "dragging a range slider should take focus")
+MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+assert(Onyx.Focus == nil, "releasing should clear it")
+
+--------------------------------------------------------------------
+-- Textarea
+--------------------------------------------------------------------
+local area = Data:Textarea({ Title = "Payload", Height = 90, Default = "a\nb\n", Flag = "Payload" })
+assert(area:Get() == "a\nb\n", "the default should load")
+assert(#area:GetLines() == 2, "GetLines should split and drop blanks")
+area:Set("one\ntwo\nthree")
+assert(#area:GetLines() == 3, "Set should replace the content")
+assert(Onyx.Flags.Payload == "one\ntwo\nthree", "a textarea should publish to its flag")
+assert(area.Instance.Screen.Scroll.Input.MultiLine == true, "the field should be multi-line")
+
+--------------------------------------------------------------------
+-- Stats, Progress, Graph
+--------------------------------------------------------------------
+local Feedback = Visuals:CreateSection("Feedback")
+local liveKills = 3
+local stats = Feedback:Stats({
+	Columns = 3,
+	Items = {
+		{ Label = "Kills", Value = function() return liveKills end },
+		{ Label = "Coins", Value = "120" },
+		{ Label = "Time", Value = "0:42" },
+	},
+})
+assert(#stats.Tiles >= 3, "three tiles expected")
+RS.Heartbeat:Fire(0.2)
+assert(stats.Tiles[1].ValueLabel.Text == "3", "a live stat should poll its value")
+liveKills = 9
+RS.Heartbeat:Fire(0.2)
+assert(stats.Tiles[1].ValueLabel.Text == "9", "and follow it")
+stats:Set("Coins", "500")
+assert(stats.Tiles[2].ValueLabel.Text == "500", "Set by label should work")
+
+local progress = Feedback:Progress({ Title = "Loading", Max = 100, Value = 0 })
+progress:Set(50)
+assert(progress:Get() == 50, "progress should store its value")
+assert(progress.Instance:FindFirstChild("Track").Fill.Size.X.Scale == 0.5, "the fill should follow")
+progress:Set(500)
+assert(progress:Get() == 100, "progress should clamp to Max")
+progress:SetIndeterminate(true)
+assert(progress.Indeterminate == true, "indeterminate should latch")
+progress:Set(10)
+assert(progress.Indeterminate == false, "setting a value should leave indeterminate")
+
+local graph = Feedback:Graph({ Title = "FPS", Points = 8, Max = 60 })
+graph:Push(30)
+graph:Push(60)
+assert(#graph.Values == 2, "pushes should accumulate")
+for _ = 1, 20 do graph:Push(10) end
+assert(#graph.Values == 8, "the graph should keep only its sample window")
+graph:SetValues({ 1, 2, 3 })
+assert(#graph.Values == 3 and graph.Values[3] == 3, "SetValues should replace the window")
+
+local autoGraph = Feedback:Graph({ Title = "Auto", Points = 6 })
+autoGraph:SetValues({ 5, 10, 20 })
+assert(autoGraph.Max == 20, "an auto-scaled graph should track its peak")
+
+local feed = 0
+autoGraph:Bind(function() feed = feed + 1; return feed end, 0.1)
+RS.Heartbeat:Fire(0.2)
+RS.Heartbeat:Fire(0.2)
+assert(#autoGraph.Values > 3, "a bound graph should feed itself")
+autoGraph:Unbind()
+local frozen = #autoGraph.Values
+RS.Heartbeat:Fire(0.2)
+assert(#autoGraph.Values == frozen, "Unbind should stop the feed")
+graph:Clear()
+assert(#graph.Values == 0, "Clear should empty the graph")
+
+--------------------------------------------------------------------
+-- loading overlay
+--------------------------------------------------------------------
+local loader = Window:Loading({ Title = "Connecting", Content = "waiting for the server" })
+assert(loader.Instance, "the loader should build")
+assert(Onyx.Focus == loader.Instance, "the loader should hold the pointer")
+loader:SetStatus("almost there")
+loader:SetProgress(0.5)
+loader:Close()
+MOCK.step(0.5)
+assert(Onyx.Focus == nil, "closing the loader should release the pointer")
+assert(loader.Closed == true, "the loader should mark itself closed")
+
+--------------------------------------------------------------------
+-- collapsible sections
+--------------------------------------------------------------------
+local folded = {}
+local fold = Visuals:CreateSection({
+	Title = "Advanced", Collapsible = true,
+	OnCollapse = function(state) folded.state = state end,
+})
+fold:Toggle({ Title = "inside" })
+assert(fold.Collapsed == false, "a collapsible section starts open")
+assert(fold.Container.Visible == true, "its contents start visible")
+
+fold:SetCollapsed(true)
+assert(fold.Collapsed == true and fold.Container.Visible == false, "collapsing should hide the contents")
+assert(folded.state == true, "OnCollapse should fire")
+
+fold.Instance.Head.MouseButton1Click:Fire()
+assert(fold.Collapsed == false, "clicking the header should expand it again")
+
+local startFolded = Visuals:CreateSection({ Title = "Closed", Collapsed = true })
+assert(startFolded.Collapsed == true, "Collapsed should start it folded")
+assert(startFolded.Container.Visible == false, "and hide its contents")
+
+-- a plain section still has no header button
+local plain = Visuals:CreateSection("Plain")
+assert(plain.Instance.Head.ClassName == "Frame", "a non-collapsible header stays a frame")
+assert(plain.SetCollapsed == nil, "and gets no collapse methods")
 
 Settings:Button({ Title = "Unload", Callback = function() end })
 
