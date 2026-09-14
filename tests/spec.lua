@@ -751,6 +751,64 @@ assert(tostring(blockedErr):find("different game"), "and should say why")
 MOCK.files["OnyxUI/configs/place_1234567/legacy.json"] = HttpService:JSONEncode({ aimbot = true })
 assert(Onyx:LoadConfig("legacy") == true, "an unstamped config should still load")
 
+do
+	--------------------------------------------------------------------
+	-- save type: per game, or universal
+	--------------------------------------------------------------------
+	assert(Onyx.ConfigScope == "place", "per game is the default")
+	assert(Onyx:SaveTypeLabel() == "per game", "and reads as such")
+
+	-- "uni" puts one set of configs somewhere every game can reach
+	assert(Onyx:SetConfigScope("uni") == true, "uni should be accepted")
+	assert(Onyx.ConfigScope == "global", "uni should mean global")
+	assert(Onyx:GameKey() == "global", "and key on nothing")
+	assert(Onyx:SaveTypeLabel() == "universal", "and read as universal")
+
+	tog:Set(true)
+	assert(Onyx:SaveConfig("anywhere") == true, "saving universally should work")
+	assert(MOCK.files["OnyxUI/configs/global/anywhere.json"],
+		"a universal config should live outside any game folder")
+
+	-- and it loads in a completely different place, which per game refuses
+	local wasPlace = game.PlaceId
+	game.PlaceId = 555000111
+	assert(Onyx:GameKey() == "global", "the key should not follow the place")
+	tog:Set(false)
+	assert(Onyx:LoadConfig("anywhere") == true, "a universal config should load anywhere")
+	assert(tog:Get() == true, "and restore its values")
+
+	-- the stamp is still written, it is just not enforced when universal
+	local universal = HttpService:JSONDecode(MOCK.files["OnyxUI/configs/global/anywhere.json"])
+	assert(universal.__onyx.PlaceId == wasPlace, "it still records where it was written")
+
+	-- auto load becomes one pointer for everywhere
+	assert(Onyx:SetAutoLoad("anywhere") == true, "universal auto load should set")
+	assert(Onyx:GetAutoLoad() == "anywhere", "and apply here")
+	game.PlaceId = wasPlace
+	assert(Onyx:GetAutoLoad() == "anywhere", "and in any other game too")
+	Onyx:ClearAutoLoad()
+
+	-- "per" puts it back, and this game's own configs are still where they were
+	assert(Onyx:SetConfigScope("per") == true, "per should be accepted")
+	assert(Onyx.ConfigScope == "place", "per should mean place")
+	assert(Onyx:GameKey() == "place_" .. wasPlace, "and key on the place again")
+	assert(#Onyx:ListConfigs() > 0, "this game's own configs should still be listed")
+
+	local badScope, badErr = Onyx:SetConfigScope("nonsense")
+	assert(badScope == false and tostring(badErr):find("per or uni"),
+		"an unknown save type should be refused by name")
+	assert(Onyx.ConfigScope == "place", "and should not change anything")
+
+	-- the window option is the way a script actually picks this
+	local uniWindow = Onyx:CreateWindow({ Title = "Universal", SaveType = "uni" })
+	assert(Onyx.ConfigScope == "global", "SaveType on the window should apply")
+	uniWindow:Destroy()
+
+	local perWindow = Onyx:CreateWindow({ Title = "Per game", Stype = "per" })
+	assert(Onyx.ConfigScope == "place", "Stype should work as an alias")
+	perWindow:Destroy()
+end
+
 --------------------------------------------------------------------
 -- deleting the auto load config clears the pointer
 --------------------------------------------------------------------

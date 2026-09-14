@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.3.2
+	  ONYX UI  ·  v1.4.0
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.3.2",
+	Version     = "1.4.0",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -1625,6 +1625,14 @@ function Onyx.CreateWindow(a, b)
 	if cfg.Accent then Theme.Accent = cfg.Accent end
 	if cfg.Folder then Onyx.Folder = cfg.Folder end
 
+	-- Where configs live has to be settled before anything reads them: the
+	-- settings page lists them and auto load restores one.
+	local saveType = cfg.SaveType or cfg.Stype or cfg.ConfigScope or cfg.Scope
+	if saveType then
+		local ok, err = Onyx.SetConfigScope(Onyx, saveType)
+		if not ok then warn("[Onyx] " .. tostring(err) .. ' (got "' .. tostring(saveType) .. '")') end
+	end
+
 	local Window = {
 		Tabs        = {},
 		ActiveTab   = nil,
@@ -2655,7 +2663,8 @@ function Onyx.CreateWindow(a, b)
 
 		Configs:Label({ Title = function()
 			local auto = Onyx.GetAutoLoad()
-			return "This game: " .. Onyx.GameKey()
+			local where = Onyx.ConfigScope == "global" and "every game" or Onyx.GameKey()
+			return "Saving " .. Onyx.SaveTypeLabel() .. " (" .. where .. ")"
 				.. "   \u{00B7}   auto load: " .. (auto or "off")
 		end, Interval = 0.5 })
 
@@ -6836,15 +6845,39 @@ function Onyx.GameKey()
 	return "place_" .. PlaceId()
 end
 
+-- What a script calls the choice and what the folders are keyed on are not
+-- the same vocabulary, so the short names map onto the scopes.
+local SCOPE_ALIASES = {
+	per        = "place",   -- per game
+	game       = "place",
+	place      = "place",
+	uni        = "global",  -- universal: one set of configs, loadable anywhere
+	universal  = "global",
+	global     = "global",
+	all        = "global",
+	shared     = "global",
+	universe   = "universe",  -- every place in one experience
+	experience = "universe",
+}
+
 function Onyx.SetConfigScope(a, b)
 	local scope = b
 	if a ~= Onyx then scope = a end
-	scope = tostring(scope or "place"):lower()
-	if scope ~= "place" and scope ~= "universe" and scope ~= "global" then
-		return false, "scope must be place, universe or global"
+
+	local resolved = SCOPE_ALIASES[tostring(scope or "per"):lower()]
+	if not resolved then
+		return false, "save type must be per or uni"
 	end
-	Onyx.ConfigScope = scope
+
+	Onyx.ConfigScope = resolved
 	return true
+end
+
+-- how the current scope reads in the interface
+function Onyx.SaveTypeLabel()
+	if Onyx.ConfigScope == "global" then return "universal" end
+	if Onyx.ConfigScope == "universe" then return "per experience" end
+	return "per game"
 end
 
 local function ConfigDir()

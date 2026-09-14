@@ -70,6 +70,7 @@ local Window = Onyx:CreateWindow({
     RailWidth    = 158,
     Resizable    = true,                     -- bottom-right grip
     ShowUserInfo = true,                     -- avatar + name in the rail
+    SaveType     = "per",                    -- config scope: "per" game | "uni" versal
     UnibarIcon   = true,                     -- show/hide button in Roblox's topbar
     MobileButton = "auto",                   -- floating button: auto | true | false
     FallbackDelay = 4,                       -- grace before judging the icon unreachable
@@ -834,18 +835,41 @@ Two things keep one game's loadout out of another's:
    was written in, and `LoadConfig` refuses one whose stamp does not match the
    game you are in — so a file copied between folders by hand is caught too.
 
-What counts as "this game" is the scope:
+What counts as "this game" is the **save type**, picked on the window:
 
 ```lua
-Onyx:SetConfigScope("place")      -- default: PlaceId, the level you are in
-Onyx:SetConfigScope("universe")   -- GameId, shared by every place in one experience
-Onyx:SetConfigScope("global")     -- one set of configs for everything
-Onyx:GameKey()                    -- "place_1234567"
+Onyx:CreateWindow({ Title = "My Script", SaveType = "per" })   -- default
+Onyx:CreateWindow({ Title = "My Script", SaveType = "uni" })
 ```
 
-Use `universe` when a lobby and its arena should share one config. Set the
-scope before creating the window, since it decides where everything is read
-from.
+| `SaveType` | Configs live in | Means |
+| --- | --- | --- |
+| `"per"` | `configs/place_1234567/` | One set per game. A loadout saved here only exists here. |
+| `"uni"` | `configs/global/` | One set, loadable anywhere the script runs. |
+
+Use `"uni"` for a script whose settings mean the same thing everywhere — a
+theme, a webhook, a keybind layout. Use `"per"` (the default) when the settings
+are about the game you are in, which is why it is the default.
+
+Since it decides where everything is read from, `SaveType` is applied before
+the window builds anything. `Stype` works as an alias, and so do the longer
+names:
+
+```lua
+Onyx:SetConfigScope("per")        -- "game", "place"
+Onyx:SetConfigScope("uni")        -- "universal", "global", "all", "shared"
+Onyx:SetConfigScope("universe")   -- GameId: every place in one experience
+Onyx:GameKey()                    -- "place_1234567", or "global"
+Onyx:SaveTypeLabel()              -- "per game" / "universal"
+```
+
+`universe` is the middle ground, for when a lobby and its arena should share
+one config but other games should not.
+
+Auto load follows the same scope: under `"per"` each game remembers its own
+startup config, under `"uni"` there is one pointer used everywhere. The
+per-game stamp check is skipped under `"uni"`, since loading somewhere else is
+the whole point.
 
 A config written by an older build carries no stamp and is still loaded.
 

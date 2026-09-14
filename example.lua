@@ -12,6 +12,10 @@ local Window = Onyx:CreateWindow({
 	SubTitle = "demo build",
 	Size     = UDim2.fromOffset(660, 450),
 	Keybind  = Enum.KeyCode.RightShift,
+
+	-- "per" files configs under this game, "uni" keeps one set the script can
+	-- load anywhere. Per game is the default.
+	SaveType = "per",
 })
 
 Onyx:Watermark({ Text = "Onyx", ShowFPS = true })
