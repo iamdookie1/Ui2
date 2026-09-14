@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.3.0
+	  ONYX UI  ·  v1.3.1
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.3.0",
+	Version     = "1.3.1",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -1254,8 +1254,73 @@ end
 --  future rewrite) simply means no icon, and CreateWindow falls back to the
 --  floating button.
 
-local UNIBAR_ATTR  = "OnyxUnibarIcon"
-local UNIBAR_OWNER = "OnyxUnibarOwner"
+local UNIBAR_ATTR   = "OnyxUnibarIcon"
+local UNIBAR_OWNER  = "OnyxUnibarOwner"
+local ICON_OWNER    = "IconOwner"
+local ICON_BEAT     = "IconBeat"
+
+-- Roblox's icon row, or nil if this client has no unibar to attach to.
+local function FindUnibarRow()
+	local ok, row, sibling, left = pcall(function()
+		local app   = CoreGui:FindFirstChild("TopBarApp")
+		local inner = app and app:FindFirstChild("TopBarApp")
+		local leftFrame = inner and inner:FindFirstChild("UnibarLeftFrame")
+		local menu  = leftFrame and leftFrame:FindFirstChild("UnibarMenu")
+		if not menu then return nil end
+
+		local chat = menu:FindFirstChild("chat", true) or menu:FindFirstChild("nine_dot", true)
+		if not chat or not chat:IsA("GuiObject") or not chat.Parent then return nil end
+		return chat.Parent, chat, leftFrame
+	end)
+	if not ok then return nil end
+	return row, sibling, left
+end
+
+-- The single icon every running script shares, whichever one of them built it.
+function Onyx.TopbarIcon()
+	local row = FindUnibarRow()
+	if not row then return nil end
+
+	local ok, icon = pcall(function()
+		for _, child in ipairs(row:GetChildren()) do
+			if child:GetAttribute(UNIBAR_ATTR) == true then return child end
+		end
+		return nil
+	end)
+	return ok and icon or nil
+end
+
+-- One icon between every script, not one each: a second script appearing
+-- should not stretch the unibar. Ownership is a claim in the shared registry,
+-- taken when it is free or its holder has gone quiet, so if the owning script
+-- unloads another picks the icon up on its next pass.
+local function ClaimIcon()
+	local folder = RegistryFolder(true)
+	if not folder then return true end   -- nowhere to coordinate: behave as before
+
+	local ok, mine = pcall(function()
+		local owner = folder:GetAttribute(ICON_OWNER)
+		local beat  = tonumber(folder:GetAttribute(ICON_BEAT)) or 0
+
+		if owner == nil or owner == INSTANCE_ID or (os.time() - beat) > STALE_AFTER then
+			folder:SetAttribute(ICON_OWNER, INSTANCE_ID)
+			folder:SetAttribute(ICON_BEAT, os.time())
+			return true
+		end
+		return false
+	end)
+	return ok and mine or false
+end
+
+local function ReleaseIcon()
+	local folder = RegistryFolder(false)
+	if not folder then return end
+	pcall(function()
+		if folder:GetAttribute(ICON_OWNER) == INSTANCE_ID then
+			folder:SetAttribute(ICON_OWNER, nil)
+		end
+	end)
+end
 
 -- A sliders/tune mark: three lanes with a knob, each lane broken either side
 -- of its knob so it reads without needing to match the background.
@@ -1301,12 +1366,12 @@ end
 
 -- returns a table with Exists() once the icon is (or is not) in the unibar
 local function AttachUnibarIcon(Window)
-	local state = { Icon = nil, Dead = false }
+	local state = { Icon = nil, Dead = false, Owner = false, SetCount = function() end }
 
 	local ok = pcall(function()
 		local MARGIN = 4
 		local widened = {}  -- frame -> original Size, so unload can undo the stretch
-		local mark
+		local mark, count
 
 		-- any Onyx icon, including other scripts'
 		local function isOnyx(instance)
@@ -1316,18 +1381,6 @@ local function AttachUnibarIcon(Window)
 		-- only the ones this copy of the library put there
 		local function isOurs(instance)
 			return isOnyx(instance) and instance:GetAttribute(UNIBAR_OWNER) == INSTANCE_ID
-		end
-
-		local function findRow()
-			local app   = CoreGui:FindFirstChild("TopBarApp")
-			local inner = app and app:FindFirstChild("TopBarApp")
-			local left  = inner and inner:FindFirstChild("UnibarLeftFrame")
-			local menu  = left and left:FindFirstChild("UnibarMenu")
-			if not menu then return nil end
-
-			local sibling = menu:FindFirstChild("chat", true) or menu:FindFirstChild("nine_dot", true)
-			if not sibling or not sibling:IsA("GuiObject") or not sibling.Parent then return nil end
-			return sibling.Parent, sibling, left
 		end
 
 		-- How far right everything that is not our own icon reaches. Another
@@ -1389,6 +1442,12 @@ local function AttachUnibarIcon(Window)
 			end
 		end
 
+		function state.SetCount(n)
+			if not count then return end
+			count.Visible = n > 1
+			count.Text = tostring(n)
+		end
+
 		local function paint(pressed)
 			if not mark then return end
 			if pressed then
@@ -1408,7 +1467,16 @@ local function AttachUnibarIcon(Window)
 			pcall(function() icon.AutoLocalize = false end)
 
 			mark = OnyxMark(icon, 18, sibling.ZIndex + 1)
-			mark.SetColor(Theme.Accent)   -- so two scripts read apart at a glance
+			mark.SetColor(Theme.Accent)
+
+			-- one icon stands for every running script, so it says how many
+			count = Text({
+				Name = "Count", Parent = icon, ZIndex = sibling.ZIndex + 2,
+				Font = FONT_B, TextSize = 10, Text = "", TextColor3 = Theme.Accent,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 5),
+				Size = UDim2.fromOffset(12, 12), Visible = false,
+			})
 
 			-- tagged before parenting, so no measuring pass ever sees it untagged
 			icon:SetAttribute(UNIBAR_ATTR, true)
@@ -1447,10 +1515,27 @@ local function AttachUnibarIcon(Window)
 			end
 		end
 
+		local function dropIcon()
+			if state.Icon then
+				pcall(function() state.Icon:Destroy() end)
+				state.Icon = nil
+				mark = nil
+			end
+			-- hand the topbar its widths back; whoever owns the icon now will
+			-- do its own widening
+			restoreWidths()
+		end
+
 		local function refresh()
 			if state.Dead then return end
-			local row, sibling, left = findRow()
+			local row, sibling, left = FindUnibarRow()
 			if not row then return end
+
+			state.Owner = ClaimIcon()
+			if not state.Owner then
+				dropIcon()
+				return
+			end
 
 			if state.Icon and not state.Icon:IsDescendantOf(game) then
 				state.Icon = nil
@@ -1464,6 +1549,7 @@ local function AttachUnibarIcon(Window)
 
 			sweepStale(row)
 			fit(row, sibling, left)
+			state.SetCount(Onyx.InstanceCount())
 		end
 
 		state.Refresh = refresh
@@ -1477,6 +1563,7 @@ local function AttachUnibarIcon(Window)
 				state.Icon = nil
 			end
 			restoreWidths()
+			ReleaseIcon()
 		end)
 
 		refresh()
@@ -2095,11 +2182,16 @@ function Onyx.CreateWindow(a, b)
 	-- Existing is not the same as reachable. A game can hide the topbar or
 	-- cover it at any point, including long after the window was built, so
 	-- this is asked again on every pass rather than once at startup.
+	-- The shared icon, not ours specifically: a script that does not own the
+	-- icon is still reachable through it, and must not stack up a second
+	-- floating button of its own.
 	function Window.IconUsable()
-		if not unibar or not unibar.Icon or not unibar.Icon.Parent then return false end
+		if cfg.UnibarIcon == false then return false end
+
+		local icon = Onyx.TopbarIcon()
+		if not icon or not icon.Parent then return false end
 
 		local ok, usable = pcall(function()
-			local icon = unibar.Icon
 			if not icon.Visible or icon.AbsoluteSize.X <= 0 then return false end
 
 			local node = icon.Parent

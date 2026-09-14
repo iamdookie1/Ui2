@@ -11,6 +11,7 @@ local ok, Onyx = pcall(LoadOnyx)
 assert(ok, "library failed to load: " .. tostring(Onyx))
 print("loaded " .. Onyx.Name .. " v" .. Onyx.Version)
 
+local RS = game:GetService("RunService")
 local fired = {}
 local function note(k, v) fired[k] = v end
 
@@ -396,7 +397,7 @@ assert(Window.Visible ~= beforeToggle, "the fallback button should toggle the wi
 Window:SetVisible(true)
 
 --------------------------------------------------------------------
--- the topbar icon, and two scripts sharing the topbar
+-- the topbar icon is shared, not one per script
 --------------------------------------------------------------------
 MOCK.buildTopbar()
 Window.Unibar.Refresh()
@@ -404,119 +405,146 @@ Window.Unibar.Refresh()
 local icon = Window.Unibar.Icon
 assert(icon, "the icon should attach once a topbar exists")
 assert(icon:GetAttribute("OnyxUnibarIcon") == true, "it should be tagged as ours")
-assert(icon:GetAttribute("OnyxUnibarOwner") ~= nil, "and carry an owner id")
+assert(Window.Unibar.Owner == true, "the first script should own the icon")
 assert(icon.Position.X.Offset == 88, "it should sit after the native icons, got "
 	.. icon.Position.X.Offset)
 assert(Window.IconUsable() == true, "an attached icon should read as usable")
+assert(Onyx.TopbarIcon() == icon, "TopbarIcon should find the shared icon")
 
--- a second script's icon must survive our refresh, and push ours along
-local foreign = MOCK.addForeignIcon(88)
+-- one script, no count badge
+local badge = icon:FindFirstChild("Count")
+assert(badge and badge.Visible == false, "a lone script needs no count badge")
+
+local iconRegistry = Onyx.Root.Parent:FindFirstChild("OnyxInstances")
+assert(iconRegistry, "the registry folder should exist")
+assert(iconRegistry:GetAttribute("IconOwner") == Onyx.InstanceId,
+	"ownership should be recorded in the registry")
+
+-- a second script claims the icon: ours steps aside instead of adding another
+local widthBefore = MOCK.topbar.Left.Size.X.Offset
+iconRegistry:SetAttribute("IconOwner", "other-script")
+iconRegistry:SetAttribute("IconBeat", os.time())
 Window.Unibar.Refresh()
-assert(foreign.Destroyed ~= true, "another script's icon must not be swept away")
-assert(Window.Unibar.Icon == icon, "and ours should not be rebuilt")
-assert(icon.Position.X.Offset == 132, "our icon should move aside for it, got "
-	.. icon.Position.X.Offset)
 
--- our own orphan, from a window that went without unloading, is still swept
+assert(Window.Unibar.Icon == nil, "a script that does not own the icon must not keep one")
+assert(Window.Unibar.Owner == false, "and should know it does not own it")
+assert(icon.Destroyed == true, "its icon should be gone from the topbar")
+assert(MOCK.topbar.Left.Size.X.Offset ~= widthBefore or widthBefore == 88,
+	"and the topbar should not stay stretched for an icon that left")
+
+-- the owner going quiet hands the icon over
+iconRegistry:SetAttribute("IconBeat", os.time() - 600)
+Window.Unibar.Refresh()
+assert(Window.Unibar.Icon ~= nil, "a stale owner should lose the icon")
+assert(iconRegistry:GetAttribute("IconOwner") == Onyx.InstanceId, "and we should claim it")
+
+icon = Window.Unibar.Icon
+
+-- an icon from another script is never swept, but our own orphan is
+local foreign = MOCK.addForeignIcon(150)
 local orphan = Instance.new("TextButton")
 orphan.Name = "onyx"
 orphan:SetAttribute("OnyxUnibarIcon", true)
 orphan:SetAttribute("OnyxUnibarOwner", Onyx.InstanceId)
 orphan.Parent = MOCK.topbar.Row
+
 Window.Unibar.Refresh()
+assert(foreign.Destroyed ~= true, "another script's icon must not be swept away")
 assert(orphan.Destroyed == true, "our own orphaned icon should be swept")
-assert(foreign.Destroyed ~= true, "but still not the other script's")
-
 foreign:Destroy()
+Window.Unibar.Refresh()
 
---------------------------------------------------------------------
--- live text: labels and paragraphs driven by a function
---------------------------------------------------------------------
-local RS = game:GetService("RunService")
-local tick = 0
+do
+	--------------------------------------------------------------------
+	-- live text: labels and paragraphs driven by a function
+	--------------------------------------------------------------------
+	local tick = 0
 
-local liveLabel = Misc:Label({ Title = function() return "count: " .. tick end })
-RS.Heartbeat:Fire(0.2)
-assert(liveLabel.Instance.Text == "count: 0", "live label did not take its first value")
-tick = 7
-RS.Heartbeat:Fire(0.2)
-assert(liveLabel.Instance.Text == "count: 7", "live label did not follow the value")
+	local liveLabel = Misc:Label({ Title = function() return "count: " .. tick end })
+	RS.Heartbeat:Fire(0.2)
+	assert(liveLabel.Instance.Text == "count: 0", "live label did not take its first value")
+	tick = 7
+	RS.Heartbeat:Fire(0.2)
+	assert(liveLabel.Instance.Text == "count: 7", "live label did not follow the value")
 
-liveLabel:Unbind()
-tick = 9
-RS.Heartbeat:Fire(0.2)
-assert(liveLabel.Instance.Text == "count: 7", "unbind should stop updates")
+	liveLabel:Unbind()
+	tick = 9
+	RS.Heartbeat:Fire(0.2)
+	assert(liveLabel.Instance.Text == "count: 7", "unbind should stop updates")
 
-liveLabel:SetText("static")
-assert(liveLabel.Instance.Text == "static", "SetText should still work after unbind")
-liveLabel:SetText(function() return "rebound " .. tick end)
-RS.Heartbeat:Fire(0.2)
-assert(liveLabel.Instance.Text == "rebound 9", "passing a function to SetText should rebind")
+	liveLabel:SetText("static")
+	assert(liveLabel.Instance.Text == "static", "SetText should still work after unbind")
+	liveLabel:SetText(function() return "rebound " .. tick end)
+	RS.Heartbeat:Fire(0.2)
+	assert(liveLabel.Instance.Text == "rebound 9", "passing a function to SetText should rebind")
 
-local livePara = Misc:Paragraph({ Title = "Live", Content = function() return "value " .. tick end })
-RS.Heartbeat:Fire(0.2)
-assert(livePara.Instance.Title.Text == "Live", "a static paragraph title should stay put")
-assert(livePara.Instance.Content.Text == "value 9", "live paragraph body did not bind")
-tick = 11
-RS.Heartbeat:Fire(0.2)
-assert(livePara.Instance.Content.Text == "value 11", "live paragraph body did not follow")
-livePara:BindTitle(function() return "T" .. tick end)
-RS.Heartbeat:Fire(0.2)
-assert(livePara.Instance.Title.Text == "T11", "BindTitle did not take")
-livePara:SetContent("frozen")
-RS.Heartbeat:Fire(0.2)
-assert(livePara.Instance.Content.Text == "frozen", "SetContent should unbind the body")
+	local livePara = Misc:Paragraph({ Title = "Live", Content = function() return "value " .. tick end })
+	RS.Heartbeat:Fire(0.2)
+	assert(livePara.Instance.Title.Text == "Live", "a static paragraph title should stay put")
+	assert(livePara.Instance.Content.Text == "value 9", "live paragraph body did not bind")
+	tick = 11
+	RS.Heartbeat:Fire(0.2)
+	assert(livePara.Instance.Content.Text == "value 11", "live paragraph body did not follow")
+	livePara:BindTitle(function() return "T" .. tick end)
+	RS.Heartbeat:Fire(0.2)
+	assert(livePara.Instance.Title.Text == "T11", "BindTitle did not take")
+	livePara:SetContent("frozen")
+	RS.Heartbeat:Fire(0.2)
+	assert(livePara.Instance.Content.Text == "frozen", "SetContent should unbind the body")
 
--- a destroyed live element must stop polling
-livePara:Destroy()
-liveLabel:Destroy()
-RS.Heartbeat:Fire(0.2)
-
---------------------------------------------------------------------
--- console
---------------------------------------------------------------------
-local console = Misc:Console({ Title = "Output", Height = 120, MaxLines = 3 })
-local screen = console.Instance:FindFirstChild("Screen")
-assert(screen, "console should have a screen")
-local placeholder = screen.List:FindFirstChild("Placeholder")
-assert(placeholder and placeholder.Visible == true, "an empty console shows its placeholder")
-
-console:Log("hello", "world")
-assert(#console.Lines == 1, "console should have one line")
-assert(console.Lines[1].Text == "hello world", "console should join arguments with a space")
-assert(placeholder.Visible == false, "placeholder hides once there is output")
-
-console:Info("i")
-console:Success("s")
-console:Warn("w")
-console:Error("e")
-assert(#console.Lines == 3, "ring buffer should cap at MaxLines, got " .. #console.Lines)
-assert(console.Lines[1].Text == "s", "the oldest lines should be dropped first")
-assert(console.Lines[3].Level == "error", "last line should keep its level")
-assert(console:GetText() == "s\nw\ne", "GetText should join the surviving lines")
-assert(console:Copy() == false, "no clipboard exists in the mock")
-
-console:SetHeight(90)
-assert(screen.Size.Y.Offset == 90, "SetHeight did not resize the screen")
-
-console:Clear()
-assert(#console.Lines == 0, "clear should empty the buffer")
-assert(placeholder.Visible == true, "clear should bring the placeholder back")
-
--- header actions are wired
-local clearBtn
-for _, c in ipairs(console.Instance.Head:GetDescendants()) do
-	if c.ClassName == "TextButton" and c.Text == "CLEAR" then clearBtn = c end
+	-- a destroyed live element must stop polling
+	livePara:Destroy()
+	liveLabel:Destroy()
+	RS.Heartbeat:Fire(0.2)
 end
-assert(clearBtn, "console should have a CLEAR action")
-console:Log("about to be cleared")
-clearBtn.MouseButton1Click:Fire()
-assert(#console.Lines == 0, "the CLEAR action should empty the console")
 
-local seeded = Misc:Console({ Title = "Seeded", Lines = { "one", { Text = "two", Level = "warn" } } })
-assert(#seeded.Lines == 2, "Lines config should seed the console")
-assert(seeded.Lines[2].Level == "warn", "seeded line levels should be honoured")
-seeded:Destroy()
+do
+	--------------------------------------------------------------------
+	-- console
+	--------------------------------------------------------------------
+	local console = Misc:Console({ Title = "Output", Height = 120, MaxLines = 3 })
+	local screen = console.Instance:FindFirstChild("Screen")
+	assert(screen, "console should have a screen")
+	local placeholder = screen.List:FindFirstChild("Placeholder")
+	assert(placeholder and placeholder.Visible == true, "an empty console shows its placeholder")
+
+	console:Log("hello", "world")
+	assert(#console.Lines == 1, "console should have one line")
+	assert(console.Lines[1].Text == "hello world", "console should join arguments with a space")
+	assert(placeholder.Visible == false, "placeholder hides once there is output")
+
+	console:Info("i")
+	console:Success("s")
+	console:Warn("w")
+	console:Error("e")
+	assert(#console.Lines == 3, "ring buffer should cap at MaxLines, got " .. #console.Lines)
+	assert(console.Lines[1].Text == "s", "the oldest lines should be dropped first")
+	assert(console.Lines[3].Level == "error", "last line should keep its level")
+	assert(console:GetText() == "s\nw\ne", "GetText should join the surviving lines")
+	assert(console:Copy() == false, "no clipboard exists in the mock")
+
+	console:SetHeight(90)
+	assert(screen.Size.Y.Offset == 90, "SetHeight did not resize the screen")
+
+	console:Clear()
+	assert(#console.Lines == 0, "clear should empty the buffer")
+	assert(placeholder.Visible == true, "clear should bring the placeholder back")
+
+	-- header actions are wired
+	local clearBtn
+	for _, c in ipairs(console.Instance.Head:GetDescendants()) do
+		if c.ClassName == "TextButton" and c.Text == "CLEAR" then clearBtn = c end
+	end
+	assert(clearBtn, "console should have a CLEAR action")
+	console:Log("about to be cleared")
+	clearBtn.MouseButton1Click:Fire()
+	assert(#console.Lines == 0, "the CLEAR action should empty the console")
+
+	local seeded = Misc:Console({ Title = "Seeded", Lines = { "one", { Text = "two", Level = "warn" } } })
+	assert(#seeded.Lines == 2, "Lines config should seed the console")
+	assert(seeded.Lines[2].Level == "warn", "seeded line levels should be honoured")
+	seeded:Destroy()
+end
 
 --------------------------------------------------------------------
 -- things placed below Roblox's topbar
@@ -536,44 +564,46 @@ local fixedMark = Onyx:Watermark({ Text = "fixed", Position = UDim2.fromOffset(2
 assert(fixedMark.Instance.Position.Y.Offset == 3, "an explicit Position should be left alone")
 fixedMark:Destroy()
 
---------------------------------------------------------------------
--- mini elements pair two to a row
---------------------------------------------------------------------
-local Pairs = Visuals:CreateSection("Mini")
+do
+	--------------------------------------------------------------------
+	-- mini elements pair two to a row
+	--------------------------------------------------------------------
+	local Pairs = Visuals:CreateSection("Mini")
 
-local miniA = Pairs:Button({ Title = "A", Mini = true })
-local miniB = Pairs:Toggle({ Title = "B", Mini = true })
-assert(miniA.Instance.Parent == miniB.Instance.Parent, "two minis should share a row")
-assert(miniA.Instance.Parent.Name == "Pair", "minis should live in a Pair row")
-assert(miniA.Instance.Size.X.Scale == 0.5 and miniA.Instance.Size.X.Offset == -3,
-	"a mini should be half width minus half the gutter")
-assert(miniA.Instance.LayoutOrder == 1 and miniB.Instance.LayoutOrder == 2,
-	"minis should order left to right within their row")
+	local miniA = Pairs:Button({ Title = "A", Mini = true })
+	local miniB = Pairs:Toggle({ Title = "B", Mini = true })
+	assert(miniA.Instance.Parent == miniB.Instance.Parent, "two minis should share a row")
+	assert(miniA.Instance.Parent.Name == "Pair", "minis should live in a Pair row")
+	assert(miniA.Instance.Size.X.Scale == 0.5 and miniA.Instance.Size.X.Offset == -3,
+		"a mini should be half width minus half the gutter")
+	assert(miniA.Instance.LayoutOrder == 1 and miniB.Instance.LayoutOrder == 2,
+		"minis should order left to right within their row")
 
--- a third opens a fresh row
-local miniC = Pairs:Keybind({ Title = "C", Mini = true })
-assert(miniC.Instance.Parent ~= miniA.Instance.Parent, "a third mini starts a new row")
-assert(miniC.Instance.Parent.Name == "Pair", "the new row is still a Pair")
+	-- a third opens a fresh row
+	local miniC = Pairs:Keybind({ Title = "C", Mini = true })
+	assert(miniC.Instance.Parent ~= miniA.Instance.Parent, "a third mini starts a new row")
+	assert(miniC.Instance.Parent.Name == "Pair", "the new row is still a Pair")
 
--- anything full width closes the open pair
-local miniD = Pairs:Colorpicker({ Title = "D", Mini = true })
-assert(miniD.Instance.Parent == miniC.Instance.Parent, "the second half should still be free")
-local fullSlider = Pairs:Slider({ Title = "full", Min = 0, Max = 10 })
-assert(fullSlider.Instance.Parent == Pairs.Container, "a slider is always full width")
-assert(fullSlider.Instance.Size.X.Scale == 1, "a slider should span the row")
-local miniE = Pairs:Button({ Title = "E", Mini = true })
-assert(miniE.Instance.Parent ~= miniC.Instance.Parent, "a full-width element must break the pair")
+	-- anything full width closes the open pair
+	local miniD = Pairs:Colorpicker({ Title = "D", Mini = true })
+	assert(miniD.Instance.Parent == miniC.Instance.Parent, "the second half should still be free")
+	local fullSlider = Pairs:Slider({ Title = "full", Min = 0, Max = 10 })
+	assert(fullSlider.Instance.Parent == Pairs.Container, "a slider is always full width")
+	assert(fullSlider.Instance.Size.X.Scale == 1, "a slider should span the row")
+	local miniE = Pairs:Button({ Title = "E", Mini = true })
+	assert(miniE.Instance.Parent ~= miniC.Instance.Parent, "a full-width element must break the pair")
 
--- Break() abandons a half-filled row on demand
-local miniF = Pairs:Button({ Title = "F", Mini = true })
-assert(miniF.Instance.Parent == miniE.Instance.Parent, "F should join E")
-Pairs:Break()
-local miniG = Pairs:Button({ Title = "G", Mini = true })
-assert(miniG.Instance.Parent ~= miniE.Instance.Parent, "Break should start a new row")
+	-- Break() abandons a half-filled row on demand
+	local miniF = Pairs:Button({ Title = "F", Mini = true })
+	assert(miniF.Instance.Parent == miniE.Instance.Parent, "F should join E")
+	Pairs:Break()
+	local miniG = Pairs:Button({ Title = "G", Mini = true })
+	assert(miniG.Instance.Parent ~= miniE.Instance.Parent, "Break should start a new row")
 
--- Mini is ignored where it cannot work
-local wideDrop = Pairs:Dropdown({ Title = "wide", Values = { "x" }, Mini = true })
-assert(wideDrop.Instance.Size.X.Scale == 1, "a dropdown stays full width even when asked to be mini")
+	-- Mini is ignored where it cannot work
+	local wideDrop = Pairs:Dropdown({ Title = "wide", Values = { "x" }, Mini = true })
+	assert(wideDrop.Instance.Size.X.Scale == 1, "a dropdown stays full width even when asked to be mini")
+end
 
 --------------------------------------------------------------------
 -- settings page
@@ -753,62 +783,64 @@ local stillAuto = HttpService:JSONDecode(MOCK.files["OnyxUI/configs/place_123456
 assert(stillAuto.aimbot == true, "and must not overwrite the auto load config")
 Onyx:DeleteConfig("working")
 
---------------------------------------------------------------------
--- Terminal: commands in, outcomes out
---------------------------------------------------------------------
-local Cmds = Visuals:CreateSection("Terminal")
-local term = Cmds:Terminal({ Title = "Commands", Height = 150, MaxLines = 50 })
+do
+	--------------------------------------------------------------------
+	-- Terminal: commands in, outcomes out
+	--------------------------------------------------------------------
+	local Cmds = Visuals:CreateSection("Terminal")
+	local term = Cmds:Terminal({ Title = "Commands", Height = 150, MaxLines = 50 })
 
-local ran = {}
-term:Register("echo", { Description = "repeat the arguments", Callback = function(args)
-	ran.echo = args
-	return table.concat(args, " ")
-end })
-term:Register("ok", function() return true end)
-term:Register("quiet", function() return nil end)
-term:Register("boom", function() error("exploded") end)
-term:Register("refuse", function() return false, "not allowed" end)
+	local ran = {}
+	term:Register("echo", { Description = "repeat the arguments", Callback = function(args)
+		ran.echo = args
+		return table.concat(args, " ")
+	end })
+	term:Register("ok", function() return true end)
+	term:Register("quiet", function() return nil end)
+	term:Register("boom", function() error("exploded") end)
+	term:Register("refuse", function() return false, "not allowed" end)
 
-term:Run("echo hello world")
-assert(#term.Entries == 2, "a command should produce an echo and an outcome")
-assert(term.Entries[1].Kind == "command" and term.Entries[1].Text == "echo hello world")
-assert(term.Entries[2].Kind == "result" and term.Entries[2].Text == "hello world")
-assert(ran.echo[1] == "hello" and ran.echo[2] == "world", "arguments should be split")
+	term:Run("echo hello world")
+	assert(#term.Entries == 2, "a command should produce an echo and an outcome")
+	assert(term.Entries[1].Kind == "command" and term.Entries[1].Text == "echo hello world")
+	assert(term.Entries[2].Kind == "result" and term.Entries[2].Text == "hello world")
+	assert(ran.echo[1] == "hello" and ran.echo[2] == "world", "arguments should be split")
 
-term:Run("ok")
-assert(term.Entries[#term.Entries].Text == "ok", "returning true should read as ok")
+	term:Run("ok")
+	assert(term.Entries[#term.Entries].Text == "ok", "returning true should read as ok")
 
-term:Run("quiet")
-assert(term.Entries[#term.Entries].Kind == "command",
-	"returning nil should leave only the echoed command")
+	term:Run("quiet")
+	assert(term.Entries[#term.Entries].Kind == "command",
+		"returning nil should leave only the echoed command")
 
-term:Run("boom")
-local boom = term.Entries[#term.Entries]
-assert(boom.Kind == "error" and boom.Text:find("exploded"), "an erroring command should be caught")
+	term:Run("boom")
+	local boom = term.Entries[#term.Entries]
+	assert(boom.Kind == "error" and boom.Text:find("exploded"), "an erroring command should be caught")
 
-term:Run("refuse")
-local refused = term.Entries[#term.Entries]
-assert(refused.Kind == "error" and refused.Text == "not allowed", "false plus a message is an error")
+	term:Run("refuse")
+	local refused = term.Entries[#term.Entries]
+	assert(refused.Kind == "error" and refused.Text == "not allowed", "false plus a message is an error")
 
-term:Run("nonsense")
-assert(term.Entries[#term.Entries].Kind == "error", "unknown commands should error")
-assert(term.Entries[#term.Entries].Text:find("unknown command"), "and say so")
+	term:Run("nonsense")
+	assert(term.Entries[#term.Entries].Kind == "error", "unknown commands should error")
+	assert(term.Entries[#term.Entries].Text:find("unknown command"), "and say so")
 
-term:Run("help")
-assert(#term.Entries > 0, "help should list something")
+	term:Run("help")
+	assert(#term.Entries > 0, "help should list something")
 
--- there is deliberately no Log/Info: chatter belongs in a Console
-assert(term.Log == nil and term.Info == nil, "a terminal is not a log")
+	-- there is deliberately no Log/Info: chatter belongs in a Console
+	assert(term.Log == nil and term.Info == nil, "a terminal is not a log")
 
-term:Run("clear")
-assert(#term.Entries == 0, "the built-in clear should empty it")
+	term:Run("clear")
+	assert(#term.Entries == 0, "the built-in clear should empty it")
 
--- the input line runs what you type and keeps history
-term.Input.Text = "echo typed"
-term.Input.FocusLost:Fire(true)
-assert(term.Entries[1].Text == "echo typed", "the input line should run the command")
-assert(term.History[#term.History] == "echo typed", "typed commands should enter history")
-assert(term.Input.Text == "", "the input should clear after running")
+	-- the input line runs what you type and keeps history
+	term.Input.Text = "echo typed"
+	term.Input.FocusLost:Fire(true)
+	assert(term.Entries[1].Text == "echo typed", "the input line should run the command")
+	assert(term.History[#term.History] == "echo typed", "typed commands should enter history")
+	assert(term.Input.Text == "", "the input should clear after running")
+end
 
 --------------------------------------------------------------------
 -- Table
@@ -990,108 +1022,114 @@ assert(#area:GetLines() == 3, "Set should replace the content")
 assert(Onyx.Flags.Payload == "one\ntwo\nthree", "a textarea should publish to its flag")
 assert(area.Instance.Screen.Scroll.Input.MultiLine == true, "the field should be multi-line")
 
---------------------------------------------------------------------
--- Stats, Progress, Graph
---------------------------------------------------------------------
-local Feedback = Visuals:CreateSection("Feedback")
-local liveKills = 3
-local stats = Feedback:Stats({
-	Columns = 3,
-	Items = {
-		{ Label = "Kills", Value = function() return liveKills end },
-		{ Label = "Coins", Value = "120" },
-		{ Label = "Time", Value = "0:42" },
-	},
-})
-assert(#stats.Tiles >= 3, "three tiles expected")
-RS.Heartbeat:Fire(0.2)
-assert(stats.Tiles[1].ValueLabel.Text == "3", "a live stat should poll its value")
-liveKills = 9
-RS.Heartbeat:Fire(0.2)
-assert(stats.Tiles[1].ValueLabel.Text == "9", "and follow it")
-stats:Set("Coins", "500")
-assert(stats.Tiles[2].ValueLabel.Text == "500", "Set by label should work")
+do
+	--------------------------------------------------------------------
+	-- Stats, Progress, Graph
+	--------------------------------------------------------------------
+	local Feedback = Visuals:CreateSection("Feedback")
+	local liveKills = 3
+	local stats = Feedback:Stats({
+		Columns = 3,
+		Items = {
+			{ Label = "Kills", Value = function() return liveKills end },
+			{ Label = "Coins", Value = "120" },
+			{ Label = "Time", Value = "0:42" },
+		},
+	})
+	assert(#stats.Tiles >= 3, "three tiles expected")
+	RS.Heartbeat:Fire(0.2)
+	assert(stats.Tiles[1].ValueLabel.Text == "3", "a live stat should poll its value")
+	liveKills = 9
+	RS.Heartbeat:Fire(0.2)
+	assert(stats.Tiles[1].ValueLabel.Text == "9", "and follow it")
+	stats:Set("Coins", "500")
+	assert(stats.Tiles[2].ValueLabel.Text == "500", "Set by label should work")
 
-local progress = Feedback:Progress({ Title = "Loading", Max = 100, Value = 0 })
-progress:Set(50)
-assert(progress:Get() == 50, "progress should store its value")
-assert(progress.Instance:FindFirstChild("Track").Fill.Size.X.Scale == 0.5, "the fill should follow")
-progress:Set(500)
-assert(progress:Get() == 100, "progress should clamp to Max")
-progress:SetIndeterminate(true)
-assert(progress.Indeterminate == true, "indeterminate should latch")
-progress:Set(10)
-assert(progress.Indeterminate == false, "setting a value should leave indeterminate")
+	local progress = Feedback:Progress({ Title = "Loading", Max = 100, Value = 0 })
+	progress:Set(50)
+	assert(progress:Get() == 50, "progress should store its value")
+	assert(progress.Instance:FindFirstChild("Track").Fill.Size.X.Scale == 0.5, "the fill should follow")
+	progress:Set(500)
+	assert(progress:Get() == 100, "progress should clamp to Max")
+	progress:SetIndeterminate(true)
+	assert(progress.Indeterminate == true, "indeterminate should latch")
+	progress:Set(10)
+	assert(progress.Indeterminate == false, "setting a value should leave indeterminate")
 
-local graph = Feedback:Graph({ Title = "FPS", Points = 8, Max = 60 })
-graph:Push(30)
-graph:Push(60)
-assert(#graph.Values == 2, "pushes should accumulate")
-for _ = 1, 20 do graph:Push(10) end
-assert(#graph.Values == 8, "the graph should keep only its sample window")
-graph:SetValues({ 1, 2, 3 })
-assert(#graph.Values == 3 and graph.Values[3] == 3, "SetValues should replace the window")
+	local graph = Feedback:Graph({ Title = "FPS", Points = 8, Max = 60 })
+	graph:Push(30)
+	graph:Push(60)
+	assert(#graph.Values == 2, "pushes should accumulate")
+	for _ = 1, 20 do graph:Push(10) end
+	assert(#graph.Values == 8, "the graph should keep only its sample window")
+	graph:SetValues({ 1, 2, 3 })
+	assert(#graph.Values == 3 and graph.Values[3] == 3, "SetValues should replace the window")
 
-local autoGraph = Feedback:Graph({ Title = "Auto", Points = 6 })
-autoGraph:SetValues({ 5, 10, 20 })
-assert(autoGraph.Max == 20, "an auto-scaled graph should track its peak")
+	local autoGraph = Feedback:Graph({ Title = "Auto", Points = 6 })
+	autoGraph:SetValues({ 5, 10, 20 })
+	assert(autoGraph.Max == 20, "an auto-scaled graph should track its peak")
 
-local feed = 0
-autoGraph:Bind(function() feed = feed + 1; return feed end, 0.1)
-RS.Heartbeat:Fire(0.2)
-RS.Heartbeat:Fire(0.2)
-assert(#autoGraph.Values > 3, "a bound graph should feed itself")
-autoGraph:Unbind()
-local frozen = #autoGraph.Values
-RS.Heartbeat:Fire(0.2)
-assert(#autoGraph.Values == frozen, "Unbind should stop the feed")
-graph:Clear()
-assert(#graph.Values == 0, "Clear should empty the graph")
+	local feed = 0
+	autoGraph:Bind(function() feed = feed + 1; return feed end, 0.1)
+	RS.Heartbeat:Fire(0.2)
+	RS.Heartbeat:Fire(0.2)
+	assert(#autoGraph.Values > 3, "a bound graph should feed itself")
+	autoGraph:Unbind()
+	local frozen = #autoGraph.Values
+	RS.Heartbeat:Fire(0.2)
+	assert(#autoGraph.Values == frozen, "Unbind should stop the feed")
+	graph:Clear()
+	assert(#graph.Values == 0, "Clear should empty the graph")
+end
 
---------------------------------------------------------------------
--- loading overlay
---------------------------------------------------------------------
-local loader = Window:Loading({ Title = "Connecting", Content = "waiting for the server" })
-assert(loader.Instance, "the loader should build")
-assert(Onyx.Focus == loader.Instance, "the loader should hold the pointer")
-loader:SetStatus("almost there")
-loader:SetProgress(0.5)
-loader:Close()
-MOCK.step(0.5)
-assert(Onyx.Focus == nil, "closing the loader should release the pointer")
-assert(loader.Closed == true, "the loader should mark itself closed")
+do
+	--------------------------------------------------------------------
+	-- loading overlay
+	--------------------------------------------------------------------
+	local loader = Window:Loading({ Title = "Connecting", Content = "waiting for the server" })
+	assert(loader.Instance, "the loader should build")
+	assert(Onyx.Focus == loader.Instance, "the loader should hold the pointer")
+	loader:SetStatus("almost there")
+	loader:SetProgress(0.5)
+	loader:Close()
+	MOCK.step(0.5)
+	assert(Onyx.Focus == nil, "closing the loader should release the pointer")
+	assert(loader.Closed == true, "the loader should mark itself closed")
+end
 
---------------------------------------------------------------------
--- collapsible sections
---------------------------------------------------------------------
-local folded = {}
-local fold = Visuals:CreateSection({
-	Title = "Advanced", Collapsible = true,
-	OnCollapse = function(state) folded.state = state end,
-})
-fold:Toggle({ Title = "inside" })
-assert(fold.Collapsed == false, "a collapsible section starts open")
-assert(fold.Container.Visible == true, "its contents start visible")
+do
+	--------------------------------------------------------------------
+	-- collapsible sections
+	--------------------------------------------------------------------
+	local folded = {}
+	local fold = Visuals:CreateSection({
+		Title = "Advanced", Collapsible = true,
+		OnCollapse = function(state) folded.state = state end,
+	})
+	fold:Toggle({ Title = "inside" })
+	assert(fold.Collapsed == false, "a collapsible section starts open")
+	assert(fold.Container.Visible == true, "its contents start visible")
 
-fold:SetCollapsed(true)
-assert(fold.Collapsed == true and fold.Container.Visible == false, "collapsing should hide the contents")
-assert(folded.state == true, "OnCollapse should fire")
+	fold:SetCollapsed(true)
+	assert(fold.Collapsed == true and fold.Container.Visible == false, "collapsing should hide the contents")
+	assert(folded.state == true, "OnCollapse should fire")
 
-fold.Instance.Head.MouseButton1Click:Fire()
-assert(fold.Collapsed == false, "clicking the header should expand it again")
+	fold.Instance.Head.MouseButton1Click:Fire()
+	assert(fold.Collapsed == false, "clicking the header should expand it again")
 
-local startFolded = Visuals:CreateSection({ Title = "Closed", Collapsed = true })
-assert(startFolded.Collapsed == true, "Collapsed should start it folded")
-assert(startFolded.Container.Visible == false, "and hide its contents")
+	local startFolded = Visuals:CreateSection({ Title = "Closed", Collapsed = true })
+	assert(startFolded.Collapsed == true, "Collapsed should start it folded")
+	assert(startFolded.Container.Visible == false, "and hide its contents")
 
--- a plain section still has no header button
-local plain = Visuals:CreateSection("Plain")
-assert(plain.Instance.Head.ClassName == "Frame", "a non-collapsible header stays a frame")
--- under the property guard, building one at all proves its header is never
--- handed Text or AutoButtonColor, which a Frame does not have
-assert(pcall(function() return Visuals:CreateSection("Guarded") end),
-	"a plain section must build without touching button-only properties")
-assert(plain.SetCollapsed == nil, "and gets no collapse methods")
+	-- a plain section still has no header button
+	local plain = Visuals:CreateSection("Plain")
+	assert(plain.Instance.Head.ClassName == "Frame", "a non-collapsible header stays a frame")
+	-- under the property guard, building one at all proves its header is never
+	-- handed Text or AutoButtonColor, which a Frame does not have
+	assert(pcall(function() return Visuals:CreateSection("Guarded") end),
+		"a plain section must build without touching button-only properties")
+	assert(plain.SetCollapsed == nil, "and gets no collapse methods")
+end
 
 -- a stand-in for a second script, written straight into the shared registry
 local registryFolder = Onyx.Root.Parent:FindFirstChild("OnyxInstances")

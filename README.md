@@ -131,21 +131,24 @@ script reading it.
 
 That buys three things:
 
-- **Icons sit side by side.** Each instance tags its icon with an owner id, so
-  the stale-icon sweep only clears its own leftovers instead of destroying the
-  other script's, and other instances' icons count as occupied width. Each icon
-  is tinted with its own window accent so they read apart.
+- **One icon, not one each.** A second script does not add a second icon and
+  stretch the unibar. Ownership is a claim in the shared registry: whoever gets
+  there first builds the icon, everyone else leaves the topbar alone, and if
+  the owner unloads or goes quiet another picks it up within two seconds. The
+  icon shows a small count when more than one script is running.
 - **Keybinds do not collide.** A window with no `Keybind` of its own takes the
   first key no live instance has claimed — Right Shift, then Right Control,
   Right Alt, Insert, Home, End, Page Up.
-- **The icon opens a manager.** With more than one script running, pressing any
-  topbar icon (or the floating button) opens a list of every running window by
+- **The icon opens a manager.** With more than one script running, pressing the
+  topbar icon (or a floating button) opens a list of every running window by
   title, each with Show/Hide and Unload. With only one running it just toggles,
-  as before.
+  as before. Scripts that do not own the icon are still reached through it, so
+  they do not each sprout a floating button of their own.
 
 ```lua
 Onyx:ListInstances()   -- { { Id, Title, SubTitle, Visible, Keybind, Mine }, ... }
 Onyx:InstanceCount()
+Onyx:TopbarIcon()      -- the shared icon, whoever built it
 Onyx:CommandInstance(id, "toggle")   -- "show" | "hide" | "unload"
 Onyx:OpenManager()
 Onyx:CloseManager()
