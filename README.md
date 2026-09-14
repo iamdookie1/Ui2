@@ -72,6 +72,7 @@ local Window = Onyx:CreateWindow({
     ShowUserInfo = true,                     -- avatar + name in the rail
     UnibarIcon   = true,                     -- show/hide button in Roblox's topbar
     MobileButton = "auto",                   -- floating button: auto | true | false
+    FallbackDelay = 4,                       -- grace before judging the icon unreachable
     Settings     = true,                     -- settings icon + page in the topbar
     OnClose      = "hide",                   -- or a function; default asks to unload
 })
@@ -106,13 +107,56 @@ interface is hidden.
 
 This works by widening the fixed-width frames inside
 `CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame` to make room, re-measuring every
-two seconds because Roblox adds and resizes its own icons at will. `Onyx:Unload()`
-puts those widths back. Where there is no unibar to attach to — Studio, an
-older client, a future rewrite — nothing breaks: after a five second grace
-period a floating draggable button appears instead, so the interface is never
-unreachable. Force one or the other with `MobileButton = true` / `false`, or
-turn the topbar icon off with `UnibarIcon = false`. The toggle keybind works
-either way.
+two seconds because Roblox adds and resizes its own icons at will.
+`Onyx:Unload()` puts those widths back.
+
+**The floating fallback is continuous, not a one-shot.** Every two seconds the
+window asks whether the icon is genuinely reachable — present, visible, sized,
+every ancestor visible, and the topbar inset non-zero — and shows or hides a
+draggable button to match. So a game that has no unibar, hides the topbar, or
+covers it *later* still leaves you a way in, and the button retires itself once
+the icon comes back. Force one or the other with `MobileButton = true` /
+`false`, tune the startup grace with `FallbackDelay` (4s default), or turn the
+topbar icon off entirely with `UnibarIcon = false`. The keybind works
+regardless.
+
+### Running more than one script
+
+Two copies of this library in one game each get their own Lua state and cannot
+see each other through Lua at all — but they can through the DataModel. Each
+window registers a Folder beside the ScreenGui carrying its title and
+visibility as attributes plus a BindableEvent anyone can fire. State is read
+from attributes rather than invoked, so a wedged instance can never hang the
+script reading it.
+
+That buys three things:
+
+- **Icons sit side by side.** Each instance tags its icon with an owner id, so
+  the stale-icon sweep only clears its own leftovers instead of destroying the
+  other script's, and other instances' icons count as occupied width. Each icon
+  is tinted with its own window accent so they read apart.
+- **Keybinds do not collide.** A window with no `Keybind` of its own takes the
+  first key no live instance has claimed — Right Shift, then Right Control,
+  Right Alt, Insert, Home, End, Page Up.
+- **The icon opens a manager.** With more than one script running, pressing any
+  topbar icon (or the floating button) opens a list of every running window by
+  title, each with Show/Hide and Unload. With only one running it just toggles,
+  as before.
+
+```lua
+Onyx:ListInstances()   -- { { Id, Title, SubTitle, Visible, Keybind, Mine }, ... }
+Onyx:InstanceCount()
+Onyx:CommandInstance(id, "toggle")   -- "show" | "hide" | "unload"
+Onyx:OpenManager()
+Onyx:CloseManager()
+Onyx:ToggleManager()
+```
+
+Entries carry a heartbeat; one whose script died without unloading stops
+counting after 12 seconds and is pruned.
+
+Two scripts still share `Onyx.Folder` by default, so give the second one its
+own (`Folder = "MyScript"`) or their configs will overwrite each other.
 
 ### Tabs and sections
 

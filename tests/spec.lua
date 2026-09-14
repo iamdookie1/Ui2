@@ -360,19 +360,74 @@ Onyx:SetNotificationCorner("bottom-right")
 --------------------------------------------------------------------
 -- visibility control: unibar icon with a floating fallback
 --------------------------------------------------------------------
--- the mock has no CoreGui.TopBarApp, so the icon cannot attach and the
--- fallback button should appear once the grace period elapses
-MOCK.step(6)
+-- no topbar exists yet, so the icon cannot attach
 assert(Window.Unibar ~= nil, "a unibar attach should have been attempted")
-assert(Window.Unibar.Icon == nil, "no unibar exists in the mock, so no icon")
-assert(Window.MobileButton ~= nil, "the floating fallback should exist after the grace period")
-assert(Window.MobileButton:FindFirstChild("OnyxMark"), "the fallback button should use the Onyx mark")
+assert(Window.Unibar.Icon == nil, "without a topbar there is no icon")
+assert(Window.IconUsable() == false, "and nothing usable to press")
+
+-- the fallback is judged continuously, not once: during the grace period it
+-- holds off, because the unibar streams in after the join
+Window.FallbackDelay = 999
+Window:UpdateFallback()
+assert(Window.MobileButton == nil, "the fallback should wait out the grace period")
+
+Window.FallbackDelay = 0
+Window:UpdateFallback()
+assert(Window.MobileButton ~= nil, "with no usable icon the fallback should appear")
+assert(Window.MobileButton.Visible == true, "and be visible")
+assert(Window.MobileButton:FindFirstChild("OnyxMark"), "the fallback should use the Onyx mark")
+
+-- once the icon becomes reachable the fallback stands down again
+local realUsable = Window.IconUsable
+Window.IconUsable = function() return true end
+Window:UpdateFallback()
+assert(Window.MobileButton.Visible == false, "a usable icon should retire the fallback")
+
+-- and comes back if the game hides the topbar later
+Window.IconUsable = function() return false end
+Window:UpdateFallback()
+assert(Window.MobileButton.Visible == true, "losing the icon should bring the fallback back")
+Window.IconUsable = realUsable
 
 Window:SetVisible(true)
 local beforeToggle = Window.Visible
 Window.MobileButton.MouseButton1Click:Fire()
 assert(Window.Visible ~= beforeToggle, "the fallback button should toggle the window")
 Window:SetVisible(true)
+
+--------------------------------------------------------------------
+-- the topbar icon, and two scripts sharing the topbar
+--------------------------------------------------------------------
+MOCK.buildTopbar()
+Window.Unibar.Refresh()
+
+local icon = Window.Unibar.Icon
+assert(icon, "the icon should attach once a topbar exists")
+assert(icon:GetAttribute("OnyxUnibarIcon") == true, "it should be tagged as ours")
+assert(icon:GetAttribute("OnyxUnibarOwner") ~= nil, "and carry an owner id")
+assert(icon.Position.X.Offset == 88, "it should sit after the native icons, got "
+	.. icon.Position.X.Offset)
+assert(Window.IconUsable() == true, "an attached icon should read as usable")
+
+-- a second script's icon must survive our refresh, and push ours along
+local foreign = MOCK.addForeignIcon(88)
+Window.Unibar.Refresh()
+assert(foreign.Destroyed ~= true, "another script's icon must not be swept away")
+assert(Window.Unibar.Icon == icon, "and ours should not be rebuilt")
+assert(icon.Position.X.Offset == 132, "our icon should move aside for it, got "
+	.. icon.Position.X.Offset)
+
+-- our own orphan, from a window that went without unloading, is still swept
+local orphan = Instance.new("TextButton")
+orphan.Name = "onyx"
+orphan:SetAttribute("OnyxUnibarIcon", true)
+orphan:SetAttribute("OnyxUnibarOwner", Onyx.InstanceId)
+orphan.Parent = MOCK.topbar.Row
+Window.Unibar.Refresh()
+assert(orphan.Destroyed == true, "our own orphaned icon should be swept")
+assert(foreign.Destroyed ~= true, "but still not the other script's")
+
+foreign:Destroy()
 
 --------------------------------------------------------------------
 -- live text: labels and paragraphs driven by a function
@@ -1037,6 +1092,162 @@ assert(plain.Instance.Head.ClassName == "Frame", "a non-collapsible header stays
 assert(pcall(function() return Visuals:CreateSection("Guarded") end),
 	"a plain section must build without touching button-only properties")
 assert(plain.SetCollapsed == nil, "and gets no collapse methods")
+
+-- a stand-in for a second script, written straight into the shared registry
+local registryFolder = Onyx.Root.Parent:FindFirstChild("OnyxInstances")
+assert(registryFolder, "the registry folder should live beside the ScreenGui")
+
+local function fakeInstance(id, title, key)
+	local entry = Instance.new("Folder")
+	entry.Name = id
+	entry.Parent = registryFolder
+	entry:SetAttribute("Owner", "other-script")
+	entry:SetAttribute("Title", title)
+	entry:SetAttribute("SubTitle", "")
+	entry:SetAttribute("Visible", true)
+	entry:SetAttribute("Order", os.time() + 1)
+	entry:SetAttribute("Keybind", key or "")
+	entry:SetAttribute("Beat", os.time())
+
+	local command = Instance.new("BindableEvent")
+	command.Name = "Command"
+	command.Parent = entry
+	return entry, command
+end
+
+do
+	--------------------------------------------------------------------
+	-- the instance registry
+	--------------------------------------------------------------------
+	local mine = Onyx:ListInstances()
+	assert(#mine == 1, "this window should be the only registered instance, got " .. #mine)
+	assert(mine[1].Title == "Onyx Demo", "the entry should carry the window title")
+	assert(mine[1].Mine == true, "and be marked as belonging to this script")
+	assert(mine[1].Visible == Window.Visible, "and track visibility")
+
+	Window:SetVisible(false)
+	assert(Onyx:ListInstances()[1].Visible == false, "hiding should publish to the registry")
+	Window:SetVisible(true)
+	assert(Onyx:ListInstances()[1].Visible == true, "and so should showing")
+
+	local otherEntry, otherCommand = fakeInstance("other_1", "Second Script", "RightControl")
+	local heard
+	otherCommand.Event:Connect(function(action) heard = action end)
+
+	assert(Onyx:InstanceCount() == 2, "the second script should be visible to us")
+
+	-- commands reach it without our script knowing anything about it
+	assert(Onyx:CommandInstance("other_1", "hide") == true, "commanding should succeed")
+	assert(heard == "hide", "the other instance should receive the command")
+
+	-- an entry whose script died stops counting and is cleaned up
+	otherEntry:SetAttribute("Beat", os.time() - 600)
+	assert(Onyx:InstanceCount() == 1, "a stale entry should not count")
+	assert(otherEntry.Destroyed == true, "and should be pruned")
+end
+
+do
+	--------------------------------------------------------------------
+	-- the manager
+	--------------------------------------------------------------------
+	local secondEntry = fakeInstance("other_2", "Second Script", "RightControl")
+	assert(Onyx:InstanceCount() == 2, "two instances for the manager to list")
+
+	Onyx:OpenManager()
+	local managerRows
+	for _, inst in ipairs(MOCK.allInstances) do
+		if inst.Name == "Rows" and inst.Parent and inst.Parent.Name == "Card" then managerRows = inst end
+	end
+	assert(managerRows, "the manager should build a row list")
+
+	local listed = {}
+	for _, row in ipairs(managerRows:GetChildren()) do
+		if row.Name == "Instance" then
+			listed[#listed + 1] = row:FindFirstChild("Title").Text
+		end
+	end
+	assert(#listed == 2, "the manager should list both scripts, got " .. #listed)
+
+	local sawMine, sawOther = false, false
+	for _, text in ipairs(listed) do
+		if text:find("this script") then sawMine = true end
+		if text:find("Second Script") then sawOther = true end
+	end
+	assert(sawMine, "our own window should be marked as this script")
+	assert(sawOther, "the other script should be listed by its title")
+
+	-- the row buttons drive the instance they belong to
+	local otherRow
+	for _, row in ipairs(managerRows:GetChildren()) do
+		local titleLabel = row.Name == "Instance" and row:FindFirstChild("Title")
+		if titleLabel and titleLabel.Text:find("Second Script") then otherRow = row end
+	end
+	assert(otherRow, "the other script should have a row")
+
+	local hideBtn
+	for _, inst in ipairs(otherRow:GetDescendants()) do
+		if inst.ClassName == "TextButton" and inst.Text == "Hide" then hideBtn = inst end
+	end
+	assert(hideBtn, "a visible instance should offer Hide")
+
+	local secondHeard
+	secondEntry:FindFirstChild("Command").Event:Connect(function(action) secondHeard = action end)
+	hideBtn.MouseButton1Click:Fire()
+	assert(secondHeard == "hide", "the manager's Hide should command that instance")
+
+	local unloadBtn
+	for _, inst in ipairs(otherRow:GetDescendants()) do
+		if inst.ClassName == "TextButton" and inst.Text == "Unload" then unloadBtn = inst end
+	end
+	assert(unloadBtn, "every row should offer Unload")
+	unloadBtn.MouseButton1Click:Fire()
+	assert(secondHeard == "unload", "the manager's Unload should command that instance")
+	MOCK.step(0.5)
+
+	Onyx:CloseManager()
+	MOCK.step(0.5)
+	assert(Onyx.Focus == nil, "closing the manager should release the pointer")
+
+	-- pressing the topbar icon opens the manager rather than toggling blindly
+	-- while more than one script is running
+	Window:SetVisible(true)
+	local visibleBefore = Window.Visible
+	Window.Unibar.Icon.MouseButton1Click:Fire()
+	assert(Window.Visible == visibleBefore, "with two scripts the icon must not toggle silently")
+	Onyx:CloseManager()
+	MOCK.step(0.5)
+
+	secondEntry:Destroy()
+	assert(Onyx:InstanceCount() == 1, "back to one instance")
+
+	-- with only one running, the icon just toggles
+	Window.Unibar.Icon.MouseButton1Click:Fire()
+	assert(Window.Visible ~= visibleBefore, "a lone script should toggle straight from the icon")
+	Window:SetVisible(true)
+end
+
+do
+	--------------------------------------------------------------------
+	-- keybinds do not collide between instances
+	--------------------------------------------------------------------
+	assert(Window.ToggleKey == Enum.KeyCode.RightShift, "the first window should take Right Shift")
+
+	local claimed = fakeInstance("other_3", "Third Script", "RightShift")
+	local sharedWindow = Onyx:CreateWindow({ Title = "Second Window" })
+	assert(sharedWindow.ToggleKey ~= Enum.KeyCode.RightShift,
+		"a window created while Right Shift is claimed should pick another key")
+	assert(sharedWindow.ToggleKey == Enum.KeyCode.RightControl,
+		"and should take the next free one, got " .. tostring(sharedWindow.ToggleKey))
+
+	-- an explicit keybind still wins
+	local pinned = Onyx:CreateWindow({ Title = "Pinned", Keybind = Enum.KeyCode.RightShift })
+	assert(pinned.ToggleKey == Enum.KeyCode.RightShift, "an explicit keybind should be honoured")
+
+	pinned:Destroy()
+	sharedWindow:Destroy()
+	claimed:Destroy()
+	assert(Onyx:InstanceCount() == 1, "destroying a window should unregister it")
+end
 
 Settings:Button({ Title = "Unload", Callback = function() end })
 

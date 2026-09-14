@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.2.0
+	  ONYX UI  ·  v1.3.0
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.2.0",
+	Version     = "1.3.0",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -808,22 +808,158 @@ end
 Onyx.NotificationCorner = "bottom-right"
 
 -- ================================================================
---  UNIBAR ICON
+--  INSTANCE REGISTRY
 -- ================================================================
 --
---  Roblox's own topbar ("unibar") is
---      CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame.UnibarMenu
---  where `chat` and `nine_dot` are fixed-size frames sitting edge to edge in
---  a row. Adding an icon means appending one more frame and widening every
---  literal-pixel-width ancestor up to UnibarLeftFrame so the pill grows to
---  cover it. Roblox adds, removes and resizes its own icons whenever it likes,
---  so the fit is re-measured on a timer rather than computed once.
+--  Every loadstring gets its own Lua state, so two copies of this library
+--  cannot see each other through Lua at all. They can through the DataModel:
+--  each window registers a Folder beside the ScreenGui carrying its title and
+--  visibility as attributes, plus a BindableEvent that anyone can fire to
+--  drive it. That is what lets one topbar icon manage every running script.
 --
---  Everything here is best effort: no unibar (Studio, an older client, a
---  future rewrite) simply means no icon, and CreateWindow falls back to the
---  floating button.
+--  State is read from attributes rather than invoked, so a wedged or erroring
+--  instance can never hang the script reading it. Commands are fired and
+--  forgotten for the same reason.
 
-local UNIBAR_ATTR = "OnyxUnibarIcon"
+local REGISTRY_NAME = "OnyxInstances"
+local INSTANCE_ID   = tostring(math.random(1e8, 1e9 - 1))
+local STALE_AFTER   = 12   -- seconds without a heartbeat before an entry is dead
+
+Onyx.InstanceId = INSTANCE_ID
+
+local function RegistryFolder(create)
+	local parent = Root and Root.Parent
+	if not parent then return nil end
+
+	local folder = parent:FindFirstChild(REGISTRY_NAME)
+	if not folder and create then
+		local ok, made = pcall(function()
+			return New("Folder", { Name = REGISTRY_NAME, Parent = parent })
+		end)
+		folder = ok and made or nil
+	end
+	return folder
+end
+
+local function EntryAlive(entry)
+	local beat = tonumber(entry:GetAttribute("Beat"))
+	if beat == nil then return true end          -- never beat yet: give it a chance
+	return (os.time() - beat) <= STALE_AFTER
+end
+
+-- Every live window across every running copy of the library.
+function Onyx.ListInstances()
+	local out = {}
+	local folder = RegistryFolder(false)
+	if not folder then return out end
+
+	for _, entry in ipairs(folder:GetChildren()) do
+		if entry:GetAttribute("Title") ~= nil then
+			if EntryAlive(entry) then
+				table.insert(out, {
+					Entry     = entry,
+					Id        = entry.Name,
+					Title     = tostring(entry:GetAttribute("Title") or "Onyx"),
+					SubTitle  = entry:GetAttribute("SubTitle"),
+					Visible   = entry:GetAttribute("Visible") ~= false,
+					Keybind   = entry:GetAttribute("Keybind"),
+					Order     = tonumber(entry:GetAttribute("Order")) or 0,
+					Mine      = entry:GetAttribute("Owner") == INSTANCE_ID,
+				})
+			else
+				-- the script that owned this went away without unloading
+				pcall(function() entry:Destroy() end)
+			end
+		end
+	end
+
+	table.sort(out, function(a, b)
+		if a.Order ~= b.Order then return a.Order < b.Order end
+		return a.Title < b.Title
+	end)
+	return out
+end
+
+function Onyx.InstanceCount()
+	return #Onyx.ListInstances()
+end
+
+-- fire-and-forget: "toggle" | "show" | "hide" | "unload"
+function Onyx.CommandInstance(a, b, c)
+	local id, action = b, c
+	if a ~= Onyx then id, action = a, b end
+
+	local folder = RegistryFolder(false)
+	if not folder then return false end
+
+	local entry = folder:FindFirstChild(tostring(id))
+	local command = entry and entry:FindFirstChild("Command")
+	if not command then return false end
+
+	local ok = pcall(function() command:Fire(tostring(action)) end)
+	return ok
+end
+
+-- Publishes one window into the registry and returns a handle the window uses
+-- to keep its attributes current.
+local function RegisterInstance(Window, title, subTitle)
+	local folder = RegistryFolder(true)
+	if not folder then return nil end
+
+	local id = INSTANCE_ID .. "_" .. tostring(#folder:GetChildren() + 1)
+	local ok, entry = pcall(function()
+		return New("Folder", { Name = id, Parent = folder })
+	end)
+	if not ok or not entry then return nil end
+
+	pcall(function()
+		entry:SetAttribute("Owner", INSTANCE_ID)
+		entry:SetAttribute("Title", tostring(title))
+		entry:SetAttribute("SubTitle", subTitle and tostring(subTitle) or "")
+		entry:SetAttribute("Visible", true)
+		entry:SetAttribute("Order", os.time())
+		entry:SetAttribute("Version", Onyx.Version)
+		entry:SetAttribute("Beat", os.time())
+	end)
+
+	local command = New("BindableEvent", { Name = "Command", Parent = entry })
+
+	local handle = { Id = id, Entry = entry, Command = command }
+
+	function handle.Publish()
+		pcall(function()
+			entry:SetAttribute("Visible", Window.Visible ~= false)
+			entry:SetAttribute("Title", tostring(Window.Title or title))
+			entry:SetAttribute("Keybind", Window.ToggleKey and Window.ToggleKey.Name or "")
+			entry:SetAttribute("Beat", os.time())
+		end)
+	end
+
+	function handle.Remove()
+		pcall(function() entry:Destroy() end)
+	end
+
+	command.Event:Connect(function(action)
+		action = tostring(action or ""):lower()
+		if action == "show" then
+			Window.SetVisible(true)
+		elseif action == "hide" then
+			Window.SetVisible(false)
+		elseif action == "toggle" then
+			Window.Toggle()
+		elseif action == "unload" then
+			Window.Destroy()
+		end
+		handle.Publish()
+	end)
+
+	table.insert(Onyx.Teardown, handle.Remove)
+	return handle
+end
+
+-- ================================================================
+--  THE ONYX MARK
+-- ================================================================
 
 -- the Onyx mark: an outlined diamond with a solid core, drawn rather than
 -- loaded so it needs no asset and no font coverage
@@ -863,8 +999,263 @@ local function OnyxMark(parent, size, zIndex)
 			Tween(outerStroke, { Transparency = t }, info or EASE_SNAP)
 			Tween(core, { BackgroundTransparency = t }, info or EASE_SNAP)
 		end,
+		SetColor = function(color, info)
+			Tween(outerStroke, { Color = color }, info or EASE_SNAP)
+			Tween(core, { BackgroundColor3 = color }, info or EASE_SNAP)
+		end,
 	}
 end
+
+-- ================================================================
+--  INSTANCE MANAGER
+-- ================================================================
+--
+--  Lives outside any window, because its whole job is reaching windows that
+--  are hidden. Rows are read from the registry, so scripts this copy of the
+--  library knows nothing about still show up.
+
+local ManagerLayer = New("Frame", {
+	Name = "Manager", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+	Visible = false, ZIndex = 600, Parent = Root,
+})
+
+local ManagerState = { Open = false }
+
+local function BuildManager()
+	if ManagerState.Card then return end
+
+	local scrim = New("TextButton", {
+		Name = "Scrim", BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
+		AutoButtonColor = false, Text = "", BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1), ZIndex = 600, Parent = ManagerLayer,
+	})
+
+	local card = New("Frame", {
+		Name = "Card", BackgroundColor3 = Theme.Surface, BackgroundTransparency = 1,
+		BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 360, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 601, Parent = ManagerLayer,
+	})
+	Corner(10, card)
+	local cardStroke = Stroke(card, Theme.LineBright, 1)
+	Padding(card, 14, 13, 14, 14)
+	List(card, 10)
+
+	local head = New("Frame", {
+		Name = "Head", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18),
+		LayoutOrder = 1, ZIndex = 602, Parent = card,
+	})
+	OnyxMark(head, 14, 602).Instance.Position = UDim2.fromOffset(7, 9)
+
+	local title = Text({
+		Name = "Title", Parent = head, ZIndex = 602, Font = FONT_B, TextSize = 13,
+		Text = "Running scripts", Position = UDim2.fromOffset(22, 0),
+		Size = UDim2.new(1, -50, 1, 0), TextTransparency = 1,
+	})
+
+	local closeBtn = New("TextButton", {
+		Name = "Close", BackgroundColor3 = Theme.Backdrop, BackgroundTransparency = 1,
+		AutoButtonColor = false, Text = "\u{00D7}", Font = FONT_M, TextSize = 14,
+		TextColor3 = Theme.Muted, TextTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.fromOffset(22, 20), ZIndex = 603, Parent = head,
+	})
+	Corner(5, closeBtn)
+
+	local rows = New("Frame", {
+		Name = "Rows", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, ZIndex = 602, Parent = card,
+	})
+	List(rows, 6)
+
+	local note = Text({
+		Name = "Note", Parent = card, ZIndex = 602, Font = FONT, TextSize = 11,
+		Text = "", TextColor3 = Theme.Muted, TextTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 13), LayoutOrder = 3,
+	})
+
+	ManagerState.Scrim  = scrim
+	ManagerState.Card   = card
+	ManagerState.Stroke = cardStroke
+	ManagerState.Title  = title
+	ManagerState.Close  = closeBtn
+	ManagerState.Rows   = rows
+	ManagerState.Note   = note
+
+	Hoverable(closeBtn, function(state)
+		if state == "idle" then
+			Tween(closeBtn, { BackgroundTransparency = 1, TextColor3 = Theme.Muted }, EASE_SNAP)
+		else
+			Tween(closeBtn, {
+				BackgroundTransparency = 0,
+				BackgroundColor3 = state == "press" and Theme.Active or Theme.Hover,
+				TextColor3 = Theme.Text,
+			}, EASE_SNAP)
+		end
+	end)
+	closeBtn.MouseButton1Click:Connect(function() Onyx.CloseManager() end)
+	scrim.MouseButton1Click:Connect(function() Onyx.CloseManager() end)
+end
+
+local function ManagerAction(parent, label, order, danger)
+	local btn = New("TextButton", {
+		Name = label, BackgroundColor3 = Theme.SurfaceAlt, AutoButtonColor = false,
+		Text = label, Font = FONT_M, TextSize = 11, TextColor3 = Theme.SubText,
+		Size = UDim2.fromOffset(0, 22), AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = order, ZIndex = 604, Parent = parent,
+	})
+	Padding(btn, 0, 0, 10, 10)
+	Corner(5, btn)
+	Stroke(btn, Theme.Line)
+	Hoverable(btn, function(state)
+		Tween(btn, {
+			BackgroundColor3 = state == "idle" and Theme.SurfaceAlt or Theme.Hover,
+			TextColor3 = state == "idle" and Theme.SubText or (danger and Theme.Danger or Theme.Text),
+		}, EASE_SNAP)
+	end)
+	return btn
+end
+
+function Onyx.RefreshManager()
+	if not ManagerState.Card then return end
+
+	for _, child in ipairs(ManagerState.Rows:GetChildren()) do
+		if child:IsA("TextButton") or child:IsA("Frame") then child:Destroy() end
+	end
+
+	local instances = Onyx.ListInstances()
+	ManagerState.Title.Text = #instances == 1 and "1 running script"
+		or (#instances .. " running scripts")
+
+	for index, info in ipairs(instances) do
+		local row = New("Frame", {
+			Name = "Instance", BackgroundColor3 = Theme.Backdrop, BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 40), LayoutOrder = index, ZIndex = 603, Parent = ManagerState.Rows,
+		})
+		Corner(6, row)
+		Stroke(row, Theme.Line)
+		Padding(row, 0, 0, 11, 9)
+
+		-- a dot that reads as "this one is on screen"
+		local dot = New("Frame", {
+			Name = "State", BackgroundColor3 = info.Visible and Theme.Success or Theme.Muted,
+			BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(5, 5),
+			ZIndex = 604, Parent = row,
+		})
+		Corner(3, dot)
+
+		local actions = New("Frame", {
+			BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(0, 22),
+			AutomaticSize = Enum.AutomaticSize.X, ZIndex = 604, Parent = row,
+		})
+		New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center, Parent = actions,
+		})
+
+		local label = info.Title .. (info.Mine and "  \u{00B7}  this script" or "")
+		Text({
+			Name = "Title", Parent = row, ZIndex = 604, Font = FONT_M, TextSize = 12,
+			Text = label, TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.new(0, 14, 0, 7), Size = UDim2.new(1, -134, 0, 14),
+		})
+
+		local detail = info.SubTitle
+		if detail == nil or detail == "" then
+			detail = info.Keybind and info.Keybind ~= "" and ("key: " .. info.Keybind) or ""
+		end
+		Text({
+			Name = "Detail", Parent = row, ZIndex = 604, Font = FONT, TextSize = 10.5,
+			Text = tostring(detail), TextColor3 = Theme.Muted,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.new(0, 14, 0, 21), Size = UDim2.new(1, -134, 0, 12),
+		})
+
+		local toggleBtn = ManagerAction(actions, info.Visible and "Hide" or "Show", 1)
+		toggleBtn.MouseButton1Click:Connect(function()
+			Onyx.CommandInstance(Onyx, info.Id, info.Visible and "hide" or "show")
+			task.delay(0.05, Onyx.RefreshManager)
+		end)
+
+		local unloadBtn = ManagerAction(actions, "Unload", 2, true)
+		unloadBtn.MouseButton1Click:Connect(function()
+			Onyx.CommandInstance(Onyx, info.Id, "unload")
+			task.delay(0.15, function()
+				Onyx.RefreshManager()
+				if Onyx.InstanceCount() == 0 then Onyx.CloseManager() end
+			end)
+		end)
+	end
+
+	ManagerState.Note.Text = #instances > 1
+		and "Each script keeps its own icon and keybind."
+		or "Only this script is running."
+end
+
+function Onyx.OpenManager()
+	BuildManager()
+	if ManagerState.Open then
+		Onyx.RefreshManager()
+		return
+	end
+
+	ManagerState.Open = true
+	Onyx.RefreshManager()
+
+	ManagerLayer.Visible = true
+	SetFocus(ManagerState.Scrim)
+
+	ManagerState.Card.Size = UDim2.new(0, 340, 0, 0)
+	Tween(ManagerState.Scrim, { BackgroundTransparency = 0.45 }, EASE_OUT)
+	Tween(ManagerState.Card, { BackgroundTransparency = 0, Size = UDim2.new(0, 360, 0, 0) }, EASE_SMOOTH)
+	Tween(ManagerState.Stroke, { Transparency = 0 }, EASE_SMOOTH)
+	Tween(ManagerState.Title, { TextTransparency = 0 }, EASE_SMOOTH)
+	Tween(ManagerState.Close, { TextTransparency = 0 }, EASE_SMOOTH)
+	Tween(ManagerState.Note, { TextTransparency = 0 }, EASE_SMOOTH)
+end
+
+function Onyx.CloseManager()
+	if not ManagerState.Open then return end
+	ManagerState.Open = false
+	ClearFocus(ManagerState.Scrim)
+
+	Tween(ManagerState.Scrim, { BackgroundTransparency = 1 }, EASE_OUT)
+	Tween(ManagerState.Card, { BackgroundTransparency = 1 }, EASE_OUT)
+	Tween(ManagerState.Stroke, { Transparency = 1 }, EASE_OUT)
+	Tween(ManagerState.Title, { TextTransparency = 1 }, EASE_OUT)
+	Tween(ManagerState.Close, { TextTransparency = 1 }, EASE_OUT)
+	Tween(ManagerState.Note, { TextTransparency = 1 }, EASE_OUT)
+
+	task.delay(0.25, function()
+		if not ManagerState.Open then ManagerLayer.Visible = false end
+	end)
+end
+
+function Onyx.ToggleManager()
+	if ManagerState.Open then Onyx.CloseManager() else Onyx.OpenManager() end
+end
+
+-- ================================================================
+--  UNIBAR ICON
+-- ================================================================
+--
+--  Roblox's own topbar ("unibar") is
+--      CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame.UnibarMenu
+--  where `chat` and `nine_dot` are fixed-size frames sitting edge to edge in
+--  a row. Adding an icon means appending one more frame and widening every
+--  literal-pixel-width ancestor up to UnibarLeftFrame so the pill grows to
+--  cover it. Roblox adds, removes and resizes its own icons whenever it likes,
+--  so the fit is re-measured on a timer rather than computed once.
+--
+--  Everything here is best effort: no unibar (Studio, an older client, a
+--  future rewrite) simply means no icon, and CreateWindow falls back to the
+--  floating button.
+
+local UNIBAR_ATTR  = "OnyxUnibarIcon"
+local UNIBAR_OWNER = "OnyxUnibarOwner"
 
 -- A sliders/tune mark: three lanes with a knob, each lane broken either side
 -- of its knob so it reads without needing to match the background.
@@ -917,8 +1308,14 @@ local function AttachUnibarIcon(Window)
 		local widened = {}  -- frame -> original Size, so unload can undo the stretch
 		local mark
 
-		local function isOurs(instance)
+		-- any Onyx icon, including other scripts'
+		local function isOnyx(instance)
 			return instance:GetAttribute(UNIBAR_ATTR) == true
+		end
+
+		-- only the ones this copy of the library put there
+		local function isOurs(instance)
+			return isOnyx(instance) and instance:GetAttribute(UNIBAR_OWNER) == INSTANCE_ID
 		end
 
 		local function findRow()
@@ -933,7 +1330,10 @@ local function AttachUnibarIcon(Window)
 			return sibling.Parent, sibling, left
 		end
 
-		-- how far right Roblox's own icons reach, ignoring ours
+		-- How far right everything that is not our own icon reaches. Another
+		-- script's icon counts as occupied space, so two of them sit side by
+		-- side instead of stacking; excluding only ours keeps the widening from
+		-- feeding back on itself.
 		local function nativeWidth(row)
 			local edge, rowLeft = 0, row.AbsolutePosition.X
 			for _, child in ipairs(row:GetChildren()) do
@@ -1008,14 +1408,22 @@ local function AttachUnibarIcon(Window)
 			pcall(function() icon.AutoLocalize = false end)
 
 			mark = OnyxMark(icon, 18, sibling.ZIndex + 1)
+			mark.SetColor(Theme.Accent)   -- so two scripts read apart at a glance
 
 			-- tagged before parenting, so no measuring pass ever sees it untagged
 			icon:SetAttribute(UNIBAR_ATTR, true)
+			icon:SetAttribute(UNIBAR_OWNER, INSTANCE_ID)
 			icon.Parent = row
 			state.Icon = icon
 
 			Onyx:Connect(icon.MouseButton1Click, function()
-				Window.Toggle()
+				-- with more than one script running, "which window?" has to be
+				-- asked before anything can be toggled
+				if Onyx.InstanceCount() > 1 then
+					Onyx.ToggleManager()
+				else
+					Window.Toggle()
+				end
 				paint(false)
 			end)
 			Onyx:Connect(icon.InputBegan, function(input)
@@ -1028,7 +1436,9 @@ local function AttachUnibarIcon(Window)
 			paint(false)
 		end
 
-		-- an icon left behind by a window that went away without unloading
+		-- An icon this same instance left behind, from a window that went away
+		-- without unloading. Scoped to our owner id: sweeping every Onyx icon
+		-- would have two scripts destroying each other's every two seconds.
 		local function sweepStale(row)
 			for _, child in ipairs(row:GetChildren()) do
 				if child ~= state.Icon and isOurs(child) then
@@ -1084,6 +1494,25 @@ local function AttachUnibarIcon(Window)
 	return state
 end
 
+-- Two scripts both answering Right Shift is the same problem as two icons on
+-- top of each other, so a window with no key of its own takes the first one no
+-- live instance has claimed.
+local KEY_CHOICES = {
+	Enum.KeyCode.RightShift, Enum.KeyCode.RightControl, Enum.KeyCode.RightAlt,
+	Enum.KeyCode.Insert, Enum.KeyCode.Home, Enum.KeyCode.End, Enum.KeyCode.PageUp,
+}
+
+local function FreeToggleKey()
+	local taken = {}
+	for _, info in ipairs(Onyx.ListInstances()) do
+		if info.Keybind and info.Keybind ~= "" then taken[info.Keybind] = true end
+	end
+	for _, key in ipairs(KEY_CHOICES) do
+		if not taken[key.Name] then return key end
+	end
+	return KEY_CHOICES[1]
+end
+
 -- ================================================================
 --  WINDOW
 -- ================================================================
@@ -1101,7 +1530,7 @@ function Onyx.CreateWindow(a, b)
 	local subTitle = cfg.SubTitle or cfg.Subtitle or cfg.Description
 	local size     = cfg.Size or UDim2.fromOffset(640, 440)
 	local minSize  = cfg.MinSize or Vector2.new(480, 320)
-	local toggleKey= cfg.Keybind or cfg.ToggleKey or Enum.KeyCode.RightShift
+	local toggleKey= cfg.Keybind or cfg.ToggleKey or FreeToggleKey()
 	local resizable= cfg.Resizable ~= false
 	local showUser = cfg.ShowUserInfo ~= false
 
@@ -1441,6 +1870,7 @@ function Onyx.CreateWindow(a, b)
 		if p1 ~= Window then state = p1 end
 		Window.Visible = state and true or false
 		if Window.Unibar and Window.Unibar.Paint then Window.Unibar.Paint(false) end
+		if Window.Registry then Window.Registry.Publish() end
 		if Window.Visible then
 			Shell.Visible = true
 			Shell.BackgroundTransparency = 1
@@ -1459,6 +1889,7 @@ function Onyx.CreateWindow(a, b)
 		Window.CloseAllPopouts()
 		Window.Destroyed = true
 		SetFocus(nil)
+		if Window.Registry then Window.Registry.Remove() end
 		if Window.Unibar then Window.Unibar.Dead = true end
 		Shell:Destroy()
 		for i, w in ipairs(Onyx.Windows) do
@@ -1648,25 +2079,74 @@ function Onyx.CreateWindow(a, b)
 		fab.MouseButton1Click:Connect(function()
 			pressStart = nil
 			if moved then moved = false; return end
-			Window.Toggle()
+			if Onyx.InstanceCount() > 1 then
+				Onyx.ToggleManager()
+			else
+				Window.Toggle()
+			end
 		end)
 		Window.MobileButton = fab
 	end
 
 	local unibar = cfg.UnibarIcon ~= false and AttachUnibarIcon(Window) or nil
 	Window.Unibar = unibar
+	Window.FallbackDelay = tonumber(cfg.FallbackDelay) or 4
 
-	if cfg.MobileButton == true then
-		buildFloatingButton()
-	elseif cfg.MobileButton ~= false then
-		-- give the unibar a few seconds to exist (it streams in on join), then
-		-- fall back so the interface is never unreachable without a keyboard
-		task.delay(5, function()
-			if Window.Destroyed or Onyx.Unloaded then return end
-			if unibar and unibar.Icon then return end
-			buildFloatingButton()
+	-- Existing is not the same as reachable. A game can hide the topbar or
+	-- cover it at any point, including long after the window was built, so
+	-- this is asked again on every pass rather than once at startup.
+	function Window.IconUsable()
+		if not unibar or not unibar.Icon or not unibar.Icon.Parent then return false end
+
+		local ok, usable = pcall(function()
+			local icon = unibar.Icon
+			if not icon.Visible or icon.AbsoluteSize.X <= 0 then return false end
+
+			local node = icon.Parent
+			while node and node:IsA("GuiObject") do
+				if not node.Visible then return false end
+				node = node.Parent
+			end
+
+			-- the inset collapsing is the clearest sign the topbar is gone
+			local rect = GuiService.TopbarInset
+			local height = rect and tonumber(rect.Height)
+			if height and height <= 0 then return false end
+			return true
 		end)
+		return ok and usable or false
 	end
+
+	local startedAt = os.clock()
+
+	function Window.UpdateFallback()
+		if cfg.MobileButton == false then return end
+
+		local wanted
+		if cfg.MobileButton == true then
+			wanted = true
+		elseif os.clock() - startedAt < Window.FallbackDelay then
+			return   -- the unibar streams in after the join; do not judge it yet
+		else
+			wanted = not Window.IconUsable()
+		end
+
+		if wanted then buildFloatingButton() end
+		if Window.MobileButton then Window.MobileButton.Visible = wanted end
+	end
+
+	if cfg.MobileButton == true then buildFloatingButton() end
+
+	Window.Registry = RegisterInstance(Window, title, subTitle)
+
+	task.spawn(function()
+		while not Window.Destroyed and not Onyx.Unloaded do
+			task.wait(2)
+			if Window.Destroyed or Onyx.Unloaded then return end
+			pcall(Window.UpdateFallback)
+			if Window.Registry then Window.Registry.Publish() end
+		end
+	end)
 
 	----------------------------------------------------------------
 	-- tabs
@@ -6633,6 +7113,8 @@ function Onyx.Unload()
 	if Onyx.Unloaded then return end
 	Onyx.Unloaded = true
 	Onyx.Focus = nil
+
+	pcall(Onyx.CloseManager)
 
 	-- teardown first: the unibar icon lives in CoreGui and has to put the
 	-- topbar's widths back, which destroying our own ScreenGui will not do

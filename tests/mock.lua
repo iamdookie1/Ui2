@@ -247,6 +247,44 @@ local SCHEMA = {
 	}),
 }
 
+-- Class ancestry, so IsA answers like Roblox rather than by exact name. The
+-- library leans on IsA("GuiObject") to walk the topbar, which an exact match
+-- silently fails.
+local PARENT_CLASS = {
+	GuiBase2d      = "GuiBase",
+	GuiObject      = "GuiBase2d",
+	GuiButton      = "GuiObject",
+	GuiLabel       = "GuiObject",
+	Frame          = "GuiObject",
+	ScrollingFrame = "GuiObject",
+	TextBox        = "GuiObject",
+	TextButton     = "GuiButton",
+	ImageButton    = "GuiButton",
+	TextLabel      = "GuiLabel",
+	ImageLabel     = "GuiLabel",
+	LayerCollector = "GuiBase2d",
+	ScreenGui      = "LayerCollector",
+	UIComponent    = "Instance",
+	UIConstraint   = "UIComponent",
+	UICorner       = "UIComponent",
+	UIStroke       = "UIComponent",
+	UIGradient     = "UIComponent",
+	UIPadding      = "UIComponent",
+	UILayout       = "UIComponent",
+	UIGridStyleLayout = "UILayout",
+	UIListLayout   = "UIGridStyleLayout",
+	UIGridLayout   = "UIGridStyleLayout",
+}
+
+local function classIsA(className, target)
+	local node = className
+	while node do
+		if node == target then return true end
+		node = PARENT_CLASS[node]
+	end
+	return target == "Instance"
+end
+
 local Instance_mt = {}
 Instance_mt.__instance = true
 
@@ -254,6 +292,16 @@ local DEFAULTS = {
 	AbsolutePosition = function() return vec2(0, 0) end,
 	AbsoluteSize     = function() return vec2(200, 200) end,
 	TextBounds       = function() return vec2(40, 12) end,
+	-- Roblox never returns nil for these, so neither should the mock: reading
+	-- them off instances we did not create (the topbar's own icons) is exactly
+	-- where a nil would show up.
+	ZIndex           = function() return 1 end,
+	LayoutOrder      = function() return 0 end,
+	Rotation         = function() return 0 end,
+	Position         = function() return UDim2.new() end,
+	Size             = function() return UDim2.new() end,
+	AnchorPoint      = function() return vec2(0, 0) end,
+	BackgroundTransparency = function() return 0 end,
 	AbsoluteCanvasSize = function() return vec2(0, 0) end,
 	AbsoluteContentSize = function() return vec2(0, 0) end,
 	AbsoluteWindowSize = function() return vec2(200, 200) end,
@@ -351,8 +399,16 @@ function Instance.new(className, parent)
 		walk(s)
 		return out
 	end
-	methods.FindFirstChild = function(s, name)
-		for _, c in ipairs(rawget(s, "_children")) do if c.Name == name then return c end end
+	methods.FindFirstChild = function(s, name, recursive)
+		for _, c in ipairs(rawget(s, "_children")) do
+			if c.Name == name then return c end
+		end
+		if recursive then
+			for _, c in ipairs(rawget(s, "_children")) do
+				local found = c:FindFirstChild(name, true)
+				if found then return found end
+			end
+		end
 		return nil
 	end
 	methods.FindFirstChildOfClass = function(s, cls)
@@ -365,7 +421,7 @@ function Instance.new(className, parent)
 		if not sigs[prop] then sigs[prop] = newSignal() end
 		return sigs[prop]
 	end
-	methods.IsA = function(s, cls) return rawget(s, "_props").ClassName == cls end
+	methods.IsA = function(s, cls) return classIsA(rawget(s, "_props").ClassName, cls) end
 	methods.SetAttribute = function(s, name, value) rawget(s, "_attrs")[name] = value end
 	methods.GetAttribute = function(s, name) return rawget(s, "_attrs")[name] end
 	methods.IsDescendantOf = function(s, ancestor)
@@ -380,6 +436,14 @@ function Instance.new(className, parent)
 	methods.CaptureFocus = function(s) rawget(s, "_events").Focused:Fire() end
 	methods.ReleaseFocus = function(s) rawget(s, "_events").FocusLost:Fire(false) end
 	methods.IsFocused = function() return false end
+
+	if className == "BindableEvent" then
+		local signal = newSignal()
+		rawget(self, "_props").Event = signal
+		methods.Fire = function(_, ...) signal:Fire(...) end
+	elseif className == "BindableFunction" then
+		methods.Invoke = function() return nil end
+	end
 
 	if parent then self.Parent = parent end
 	table.insert(allInstances, self)
@@ -617,7 +681,63 @@ local HttpService = service("HttpService")
 HttpService._methods.JSONEncode = function(_, v) return jsonEncode(v) end
 HttpService._methods.JSONDecode = function(_, v) return jsonDecode(v) end
 
-service("CoreGui")
+local CoreGuiService = service("CoreGui")
+
+-- Roblox's topbar, reduced to the shape AttachUnibarIcon looks for:
+-- CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame.UnibarMenu, with chat and
+-- nine_dot sitting edge to edge in a row.
+function M.buildTopbar()
+	local app = Instance.new("Frame")
+	app.Name = "TopBarApp"
+	app.Parent = CoreGuiService
+
+	local inner = Instance.new("Frame")
+	inner.Name = "TopBarApp"
+	inner.Parent = app
+
+	local left = Instance.new("Frame")
+	left.Name = "UnibarLeftFrame"
+	left.Size = UDim2.fromOffset(88, 44)
+	left.Parent = inner
+
+	local menu = Instance.new("Frame")
+	menu.Name = "UnibarMenu"
+	menu.Size = UDim2.fromOffset(88, 44)
+	menu.Parent = left
+
+	local row = Instance.new("Frame")
+	row.Name = "Row"
+	row.Size = UDim2.fromOffset(88, 44)
+	row.AbsolutePosition = vec2(0, 0)
+	row.AbsoluteSize = vec2(88, 44)
+	row.Parent = menu
+
+	for index, name in ipairs({ "chat", "nine_dot" }) do
+		local icon = Instance.new("Frame")
+		icon.Name = name
+		icon.Size = UDim2.fromOffset(44, 44)
+		icon.Position = UDim2.fromOffset((index - 1) * 44, 0)
+		icon.AbsolutePosition = vec2((index - 1) * 44, 0)
+		icon.AbsoluteSize = vec2(44, 44)
+		icon.Parent = row
+	end
+
+	M.topbar = { App = app, Left = left, Menu = menu, Row = row }
+	return M.topbar
+end
+
+-- an icon belonging to a different copy of the library
+function M.addForeignIcon(x)
+	local icon = Instance.new("TextButton")
+	icon.Name = "onyx"
+	icon.Size = UDim2.fromOffset(44, 44)
+	icon.AbsolutePosition = vec2(x, 0)
+	icon.AbsoluteSize = vec2(44, 44)
+	icon:SetAttribute("OnyxUnibarIcon", true)
+	icon:SetAttribute("OnyxUnibarOwner", "some-other-script")
+	icon.Parent = M.topbar.Row
+	return icon
+end
 
 local Gui = service("GuiService")
 Gui.TopbarInset = Rect.new(0, 0, 0, 44)
@@ -628,8 +748,18 @@ game = Instance.new("DataModel")
 game.PlaceId = 1234567
 game.GameId = 7654321
 game._methods.GetService = function(_, name)
-	if not services[name] then services[name] = Instance.new(name) end
+	if not services[name] then
+		services[name] = Instance.new(name)
+		services[name].Parent = game
+	end
 	return services[name]
+end
+
+-- services are built before `game` exists, so adopt them now: without this
+-- IsDescendantOf(game) is false for everything and code that checks whether
+-- an instance is still in the tree takes the wrong branch
+for _, instance in pairs(services) do
+	instance.Parent = game
 end
 game._methods.HttpGet = function() return "" end
 workspace = Instance.new("Workspace")
