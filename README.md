@@ -141,9 +141,10 @@ That buys three things:
   Right Alt, Insert, Home, End, Page Up.
 - **The icon opens a manager.** With more than one script running, pressing the
   topbar icon (or a floating button) opens a list of every running window by
-  title, each with Show/Hide and Unload. With only one running it just toggles,
-  as before. Scripts that do not own the icon are still reached through it, so
-  they do not each sprout a floating button of their own.
+  title, each with Show/Hide and Unload. Picking any of them closes the manager
+  — it is a chooser, not a control panel. With only one script running the icon
+  just toggles, as before. Scripts that do not own the icon are still reached
+  through it, so they do not each sprout a floating button of their own.
 
 ```lua
 Onyx:ListInstances()   -- { { Id, Title, SubTitle, Visible, Keybind, Mine }, ... }

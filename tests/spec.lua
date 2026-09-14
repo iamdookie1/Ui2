@@ -1214,37 +1214,39 @@ do
 	assert(sawMine, "our own window should be marked as this script")
 	assert(sawOther, "the other script should be listed by its title")
 
-	-- the row buttons drive the instance they belong to
-	local otherRow
-	for _, row in ipairs(managerRows:GetChildren()) do
-		local titleLabel = row.Name == "Instance" and row:FindFirstChild("Title")
-		if titleLabel and titleLabel.Text:find("Second Script") then otherRow = row end
+	-- the row buttons drive the instance they belong to. Reopening rebuilds
+	-- every row, so they are looked up fresh each time rather than held.
+	local function rowButton(title, label)
+		for _, row in ipairs(managerRows:GetChildren()) do
+			local titleLabel = row.Name == "Instance" and row:FindFirstChild("Title")
+			if titleLabel and titleLabel.Text:find(title) then
+				for _, inst in ipairs(row:GetDescendants()) do
+					if inst.ClassName == "TextButton" and inst.Text == label then return inst end
+				end
+			end
+		end
+		return nil
 	end
-	assert(otherRow, "the other script should have a row")
-
-	local hideBtn
-	for _, inst in ipairs(otherRow:GetDescendants()) do
-		if inst.ClassName == "TextButton" and inst.Text == "Hide" then hideBtn = inst end
-	end
-	assert(hideBtn, "a visible instance should offer Hide")
 
 	local secondHeard
 	secondEntry:FindFirstChild("Command").Event:Connect(function(action) secondHeard = action end)
+
+	local hideBtn = rowButton("Second Script", "Hide")
+	assert(hideBtn, "a visible instance should offer Hide")
 	hideBtn.MouseButton1Click:Fire()
 	assert(secondHeard == "hide", "the manager's Hide should command that instance")
 
-	local unloadBtn
-	for _, inst in ipairs(otherRow:GetDescendants()) do
-		if inst.ClassName == "TextButton" and inst.Text == "Unload" then unloadBtn = inst end
-	end
+	-- picking something dismisses the manager rather than leaving it up
+	assert(Onyx.Focus == nil, "Hide should close the manager")
+	MOCK.step(0.5)
+
+	Onyx:OpenManager()
+	local unloadBtn = rowButton("Second Script", "Unload")
 	assert(unloadBtn, "every row should offer Unload")
 	unloadBtn.MouseButton1Click:Fire()
 	assert(secondHeard == "unload", "the manager's Unload should command that instance")
+	assert(Onyx.Focus == nil, "Unload should close the manager too")
 	MOCK.step(0.5)
-
-	Onyx:CloseManager()
-	MOCK.step(0.5)
-	assert(Onyx.Focus == nil, "closing the manager should release the pointer")
 
 	-- pressing the topbar icon opens the manager rather than toggling blindly
 	-- while more than one script is running

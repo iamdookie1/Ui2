@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.3.1
+	  ONYX UI  ·  v1.3.2
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.3.1",
+	Version     = "1.3.2",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -1174,19 +1174,20 @@ function Onyx.RefreshManager()
 			Position = UDim2.new(0, 14, 0, 21), Size = UDim2.new(1, -134, 0, 12),
 		})
 
+		-- Every action closes the manager: it is a chooser, not a control
+		-- panel, and staying open after a choice means dismissing it by hand
+		-- every time. Closing first also keeps it off the screen when the
+		-- command is "unload this very script".
 		local toggleBtn = ManagerAction(actions, info.Visible and "Hide" or "Show", 1)
 		toggleBtn.MouseButton1Click:Connect(function()
+			Onyx.CloseManager()
 			Onyx.CommandInstance(Onyx, info.Id, info.Visible and "hide" or "show")
-			task.delay(0.05, Onyx.RefreshManager)
 		end)
 
 		local unloadBtn = ManagerAction(actions, "Unload", 2, true)
 		unloadBtn.MouseButton1Click:Connect(function()
+			Onyx.CloseManager()
 			Onyx.CommandInstance(Onyx, info.Id, "unload")
-			task.delay(0.15, function()
-				Onyx.RefreshManager()
-				if Onyx.InstanceCount() == 0 then Onyx.CloseManager() end
-			end)
 		end)
 	end
 
