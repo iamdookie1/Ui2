@@ -16,6 +16,11 @@ local Window = Onyx:CreateWindow({
 	-- "per" files configs under this game, "uni" keeps one set the script can
 	-- load anywhere. Per game is the default.
 	SaveType = "per",
+
+	-- "unibar" (default) puts a small icon in Roblox's own topbar. "edge"
+	-- skips it entirely for a translucent strip on the left edge that opens
+	-- on a tap or a drag - works even in games that hide their topbar.
+	AccessMethod = "unibar",
 })
 
 Onyx:Watermark({ Text = "Onyx", ShowFPS = true })

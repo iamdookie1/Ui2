@@ -71,9 +71,14 @@ local Window = Onyx:CreateWindow({
     Resizable    = true,                     -- bottom-right grip
     ShowUserInfo = true,                     -- avatar + name in the rail
     SaveType     = "per",                    -- config scope: "per" game | "uni" versal
-    UnibarIcon   = true,                     -- show/hide button in Roblox's topbar
-    MobileButton = "auto",                   -- floating button: auto | true | false
-    FallbackDelay = 4,                       -- grace before judging the icon unreachable
+    AccessMethod = "unibar",                 -- how to show/hide: "unibar" | "edge"
+    UnibarIcon   = true,                     -- unibar mode: icon in Roblox's topbar
+    MobileButton = "auto",                   -- unibar mode: floating button fallback
+    FallbackDelay = 4,                       -- unibar mode: grace before judging it unreachable
+    EdgeWidth    = 6,                        -- edge mode: idle width of the strip
+    EdgeMaxWidth = 56,                       -- edge mode: width fully revealed
+    EdgeHeight   = 120,                      -- edge mode: height of the strip
+    EdgeThreshold = 40,                      -- edge mode: drag distance that commits to opening
     Settings     = true,                     -- settings icon + page in the topbar
     OnClose      = "hide",                   -- or a function; default asks to unload
 })
@@ -101,25 +106,42 @@ drawn inside the window.
 
 ### Showing and hiding
 
-The show/hide control is an icon added to Roblox's own topbar (the unibar),
-next to the chat and nine-dot buttons. It is a diamond mark drawn from frames,
-so it needs no asset upload and no font coverage, and it dims while the
-interface is hidden.
+There are two ways to get the window on and off screen, picked with
+`AccessMethod`. The keybind works under either.
 
-This works by widening the fixed-width frames inside
+**`"unibar"`** (default) puts a small icon in Roblox's own topbar, next to the
+chat and nine-dot buttons. It is a diamond mark drawn from frames, so it needs
+no asset upload and no font coverage, and it dims while the interface is
+hidden. This works by widening the fixed-width frames inside
 `CoreGui.TopBarApp.TopBarApp.UnibarLeftFrame` to make room, re-measuring every
 two seconds because Roblox adds and resizes its own icons at will.
 `Onyx:Unload()` puts those widths back.
 
-**The floating fallback is continuous, not a one-shot.** Every two seconds the
-window asks whether the icon is genuinely reachable — present, visible, sized,
-every ancestor visible, and the topbar inset non-zero — and shows or hides a
-draggable button to match. So a game that has no unibar, hides the topbar, or
-covers it *later* still leaves you a way in, and the button retires itself once
-the icon comes back. Force one or the other with `MobileButton = true` /
-`false`, tune the startup grace with `FallbackDelay` (4s default), or turn the
-topbar icon off entirely with `UnibarIcon = false`. The keybind works
-regardless.
+The floating fallback under this mode is continuous, not a one-shot. Every two
+seconds the window asks whether the icon is genuinely reachable — present,
+visible, sized, every ancestor visible, and the topbar inset non-zero — and
+shows or hides a draggable button to match. So a game that has no unibar,
+hides the topbar, or covers it *later* still leaves you a way in, and the
+button retires itself once the icon comes back. Force one or the other with
+`MobileButton = true` / `false`, tune the startup grace with `FallbackDelay`
+(4s default), or turn the topbar icon off entirely with `UnibarIcon = false`.
+
+**`"edge"`** never touches CoreGui at all: instead a translucent strip sits
+flush against the left edge of the screen. Tap it to toggle, or touch and drag
+it right — past `EdgeThreshold` (40px default) commits to opening, short of it
+springs back closed. It grows and darkens as you drag, and reads as more
+present while the window is hidden than while it's already open, so it isn't
+clutter once you're in. This is the one to reach for in a game that hides its
+own topbar, or if you'd rather your players never have to find an icon buried
+next to Roblox's own chat button.
+
+```lua
+Onyx:CreateWindow({ Title = "My Script", AccessMethod = "edge" })
+```
+
+Both modes are deduplicated the same way across multiple running scripts (see
+below) — with `"edge"`, that means one translucent strip between every script,
+not one stacked on top of another.
 
 ### Running more than one script
 
@@ -132,20 +154,22 @@ script reading it.
 
 That buys three things:
 
-- **One icon, not one each.** A second script does not add a second icon and
-  stretch the unibar. Ownership is a claim in the shared registry: whoever gets
-  there first builds the icon, everyone else leaves the topbar alone, and if
-  the owner unloads or goes quiet another picks it up within two seconds. The
-  icon shows a small count when more than one script is running.
+- **One control, not one each.** A second script does not add a second icon
+  and stretch the unibar, or a second translucent strip stacked on the first —
+  whichever `AccessMethod` is in play. Ownership is a claim in the shared
+  registry: whoever gets there first builds it, everyone else leaves it alone,
+  and if the owner unloads or goes quiet another picks it up within two
+  seconds. Both carry a small count once more than one script is running.
 - **Keybinds do not collide.** A window with no `Keybind` of its own takes the
   first key no live instance has claimed — Right Shift, then Right Control,
   Right Alt, Insert, Home, End, Page Up.
-- **The icon opens a manager.** With more than one script running, pressing the
-  topbar icon (or a floating button) opens a list of every running window by
-  title, each with Show/Hide and Unload. Picking any of them closes the manager
-  — it is a chooser, not a control panel. With only one script running the icon
-  just toggles, as before. Scripts that do not own the icon are still reached
-  through it, so they do not each sprout a floating button of their own.
+- **It opens a manager.** With more than one script running, pressing the
+  topbar icon, the edge handle, or a floating button opens a list of every
+  running window by title, each with Show/Hide and Unload. Picking any of them
+  closes the manager — it is a chooser, not a control panel. With only one
+  script running it just toggles, as before. Scripts that do not own the
+  shared control are still reached through it, so they do not each sprout a
+  floating button of their own.
 
 ```lua
 Onyx:ListInstances()   -- { { Id, Title, SubTitle, Visible, Keybind, Mine }, ... }

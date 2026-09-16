@@ -1349,6 +1349,108 @@ end
 
 Settings:Button({ Title = "Unload", Callback = function() end })
 
+do
+	--------------------------------------------------------------------
+	-- edge handle: the alternative to the unibar icon
+	--------------------------------------------------------------------
+	-- Window (the one every earlier test ran against) is done with, so it is
+	-- retired here: with it gone, a fresh edge window is the only instance
+	-- registered, and a tap or a completed drag can be expected to toggle it
+	-- directly rather than opening the manager - the same "with one script..."
+	-- pattern the icon and floating button tests used earlier in this file.
+	Window:Destroy()
+	assert(Onyx:InstanceCount() == 0, "destroying the last window should empty the registry")
+
+	local edgeWindow = Onyx:CreateWindow({ Title = "Edge", AccessMethod = "edge" })
+	assert(edgeWindow.AccessMethod == "edge", "AccessMethod should stick")
+	assert(edgeWindow.Unibar == nil, "edge mode should never touch the unibar")
+	assert(edgeWindow.EdgeHandle ~= nil, "edge mode should build a handle")
+
+	local grip = edgeWindow.EdgeHandle
+	assert(grip.Owner == true, "the only script should claim the handle")
+	assert(grip.Instance.Visible == true, "the owner's handle should be shown")
+	assert(grip.Instance.Size.X.Offset == 6, "it should sit at its idle width, got "
+		.. grip.Instance.Size.X.Offset)
+
+	-- more transparent while the window is already open than while hidden
+	edgeWindow:SetVisible(true)
+	local openTransparency = grip.Instance.BackgroundTransparency
+	edgeWindow:SetVisible(false)
+	local hiddenTransparency = grip.Instance.BackgroundTransparency
+	assert(hiddenTransparency < openTransparency,
+		"the handle should read as more present while the window is hidden")
+
+	-- a drag past the threshold opens it
+	grip.Instance.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(0, 0, 0) })
+	assert(Onyx.Focus == grip.Instance, "starting a drag should take focus")
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(55, 0, 0) })
+	assert(grip.Instance.Size.X.Offset > 6, "the handle should grow while dragging")
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(Onyx.Focus == nil, "releasing should clear focus")
+	assert(edgeWindow.Visible == true, "a drag past the threshold should open the window")
+
+	-- a drag that falls short cancels rather than toggling
+	edgeWindow:SetVisible(false)
+	grip.Instance.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(0, 0, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(15, 0, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(edgeWindow.Visible == false, "a short drag should not open the window")
+
+	-- a plain tap toggles too, same as the icon and the floating button
+	grip.Instance.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(0, 0, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(edgeWindow.Visible == true, "a tap should toggle open")
+	grip.Instance.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(0, 0, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(edgeWindow.Visible == false, "and toggle closed again")
+
+	-- with more than one script running, a press opens the manager instead
+	-- of blindly toggling whichever window happens to own the handle
+	local other = fakeInstance("edge_other", "Another Script")
+	assert(Onyx:InstanceCount() == 2, "the fake entry should be counted")
+
+	local visibleBefore = edgeWindow.Visible
+	grip.Instance.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(0, 0, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(edgeWindow.Visible == visibleBefore, "with two scripts a tap must not toggle silently")
+	assert(Onyx.Focus ~= nil, "it should open the manager instead")
+	Onyx:CloseManager()
+	MOCK.step(0.5)
+
+	other:Destroy()
+	assert(Onyx:InstanceCount() == 1, "back to one instance")
+
+	-- destroying the window stops its own refresh loop. The claim itself is
+	-- only released on a full Onyx:Unload() (same as the icon's), so a fresh
+	-- window from this same script can still pick it straight back up - it
+	-- was never anyone else's to begin with.
+	edgeWindow:Destroy()
+	MOCK.step(0.5)
+	assert(grip.Dead == true, "destroying the window should stop the handle's loop")
+
+	-- one handle between scripts, exactly like the icon: a claim actually
+	-- held elsewhere means this script builds no handle of its own
+	local secondEdge = Onyx:CreateWindow({ Title = "Edge 2", AccessMethod = "edge" })
+	registryFolder:SetAttribute("EdgeOwner", "other-script")
+	registryFolder:SetAttribute("EdgeBeat", os.time())
+	secondEdge.EdgeHandle.Refresh()
+	assert(secondEdge.EdgeHandle.Owner == false, "a claim held elsewhere should be respected")
+	assert(secondEdge.EdgeHandle.Instance.Visible == false, "and no handle should show for it")
+
+	-- a stale claim is reclaimed
+	registryFolder:SetAttribute("EdgeBeat", os.time() - 600)
+	secondEdge.EdgeHandle.Refresh()
+	assert(secondEdge.EdgeHandle.Owner == true, "a stale claim should be reclaimed")
+	assert(secondEdge.EdgeHandle.Instance.Visible == true, "and the handle should reappear")
+	secondEdge:Destroy()
+
+	-- an unrecognised AccessMethod falls back to unibar rather than erroring
+	local badWindow = Onyx:CreateWindow({ Title = "Bad", AccessMethod = "sideways" })
+	assert(badWindow.AccessMethod == "unibar", "an unknown AccessMethod should fall back to unibar")
+	assert(badWindow.EdgeHandle == nil, "and build no edge handle")
+	badWindow:Destroy()
+end
+
 MOCK.step(3)
 
 if MOCK.errors and #MOCK.errors > 0 then

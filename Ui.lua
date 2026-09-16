@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  ONYX UI  ·  v1.4.0
+	  ONYX UI  ·  v1.5.0
 	  A black-theme interface library for Roblox script executors.
 	================================================================
 
@@ -42,7 +42,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Onyx = {
 	Name        = "Onyx",
-	Version     = "1.4.0",
+	Version     = "1.5.0",
 
 	Windows     = {},          -- all created windows
 	Flags       = {},          -- flag -> current value
@@ -1291,21 +1291,23 @@ function Onyx.TopbarIcon()
 	return ok and icon or nil
 end
 
--- One icon between every script, not one each: a second script appearing
--- should not stretch the unibar. Ownership is a claim in the shared registry,
--- taken when it is free or its holder has gone quiet, so if the owning script
--- unloads another picks the icon up on its next pass.
-local function ClaimIcon()
+-- One of a shared control between every script, not one each: a second
+-- script appearing should not add a second icon, or a second edge handle.
+-- Ownership is a claim in the shared registry, taken when it is free or its
+-- holder has gone quiet, so if the owning script unloads another picks the
+-- control up on its next pass. Used for both the unibar icon and the edge
+-- swipe handle, keyed by different attribute names so they claim separately.
+local function ClaimShared(ownerAttr, beatAttr)
 	local folder = RegistryFolder(true)
 	if not folder then return true end   -- nowhere to coordinate: behave as before
 
 	local ok, mine = pcall(function()
-		local owner = folder:GetAttribute(ICON_OWNER)
-		local beat  = tonumber(folder:GetAttribute(ICON_BEAT)) or 0
+		local owner = folder:GetAttribute(ownerAttr)
+		local beat  = tonumber(folder:GetAttribute(beatAttr)) or 0
 
 		if owner == nil or owner == INSTANCE_ID or (os.time() - beat) > STALE_AFTER then
-			folder:SetAttribute(ICON_OWNER, INSTANCE_ID)
-			folder:SetAttribute(ICON_BEAT, os.time())
+			folder:SetAttribute(ownerAttr, INSTANCE_ID)
+			folder:SetAttribute(beatAttr, os.time())
 			return true
 		end
 		return false
@@ -1313,15 +1315,18 @@ local function ClaimIcon()
 	return ok and mine or false
 end
 
-local function ReleaseIcon()
+local function ReleaseShared(ownerAttr)
 	local folder = RegistryFolder(false)
 	if not folder then return end
 	pcall(function()
-		if folder:GetAttribute(ICON_OWNER) == INSTANCE_ID then
-			folder:SetAttribute(ICON_OWNER, nil)
+		if folder:GetAttribute(ownerAttr) == INSTANCE_ID then
+			folder:SetAttribute(ownerAttr, nil)
 		end
 	end)
 end
+
+local function ClaimIcon() return ClaimShared(ICON_OWNER, ICON_BEAT) end
+local function ReleaseIcon() ReleaseShared(ICON_OWNER) end
 
 -- A sliders/tune mark: three lanes with a knob, each lane broken either side
 -- of its knob so it reads without needing to match the background.
@@ -1599,6 +1604,151 @@ local function FreeToggleKey()
 		if not taken[key.Name] then return key end
 	end
 	return KEY_CHOICES[1]
+end
+
+-- ================================================================
+--  EDGE HANDLE
+-- ================================================================
+--
+--  The alternative to the unibar icon: a translucent strip pinned to the
+--  left edge of the screen. Touch it and drag right to open, tap it to
+--  toggle either way. Never touches CoreGui, so it works in any game
+--  regardless of whether a topbar exists or is hidden.
+--
+--  Shared the same way the icon is: one handle between every running
+--  script, claimed in the registry, so a second script does not stack a
+--  second translucent bar on top of the first.
+
+local EDGE_OWNER = "EdgeOwner"
+local EDGE_BEAT  = "EdgeBeat"
+
+local function AttachEdgeHandle(Window, cfg)
+	local width    = tonumber(cfg.EdgeWidth) or 6
+	local maxWidth = tonumber(cfg.EdgeMaxWidth) or 56
+	local height   = tonumber(cfg.EdgeHeight) or 120
+	local threshold = tonumber(cfg.EdgeThreshold) or 40
+
+	local state = { Instance = nil, Dead = false, Owner = false }
+
+	local handle = New("TextButton", {
+		Name = "EdgeHandle", BackgroundColor3 = Theme.Surface, AutoButtonColor = false,
+		Text = "", BorderSizePixel = 0, Visible = false,
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(width, height), ZIndex = 30, Parent = WindowLayer,
+	})
+	Corner(4, handle)
+	local handleStroke = Stroke(handle, Theme.LineBright, 1)
+	state.Instance = handle
+
+	local chevron = Chevron({
+		Parent = handle, ZIndex = 31, Size = 11, Rotation = -90,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+	})
+	-- hidden until a drag reveals it: it has no business showing on a bar
+	-- so thin nothing else is drawn there yet
+	for _, bar in ipairs(chevron.Instance:GetChildren()) do
+		if bar:IsA("Frame") then bar.BackgroundTransparency = 1 end
+	end
+
+	-- a small count, same as the icon's, shown once more than one script
+	-- has claimed a stake in this handle
+	local count = Text({
+		Name = "Count", Parent = handle, ZIndex = 31, Font = FONT_B, TextSize = 10,
+		Text = "", TextColor3 = Theme.Accent, TextTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6),
+		Size = UDim2.fromOffset(20, 12),
+	})
+	BindAccent(count, "TextColor3")
+
+	-- idle: thin and faint when the window is open (nothing to reach for),
+	-- more present when it is hidden (something worth swiping for)
+	local function idleTransparency()
+		return Window.Visible and 0.92 or 0.55
+	end
+
+	local dragging, startX, revealed = false, nil, 0
+
+	local function render(alpha, animate)
+		alpha = Clamp(alpha or 0, 0, 1)
+		local info = animate and EASE_SNAP or TweenInfo.new(0)
+		local w = width + (maxWidth - width) * alpha
+		local idle = idleTransparency()
+
+		Tween(handle, {
+			Size = UDim2.fromOffset(w, height),
+			BackgroundTransparency = idle - (idle - 0.15) * alpha,
+		}, info)
+		Tween(handleStroke, { Transparency = 1 - alpha * 0.85 }, info)
+		chevron.SetColor(Theme.Text, info)
+		for _, bar in ipairs(chevron.Instance:GetChildren()) do
+			if bar:IsA("Frame") then Tween(bar, { BackgroundTransparency = 1 - alpha }, info) end
+		end
+	end
+
+	local function commit()
+		if Onyx.InstanceCount() > 1 then
+			Onyx.ToggleManager()
+		else
+			Window.Toggle()
+		end
+	end
+
+	handle.InputBegan:Connect(function(input)
+		if not IsClick(input) then return end
+		if FocusBlocked(handle) then return end
+		dragging, startX, revealed = true, input.Position.X, 0
+		SetFocus(handle)
+	end)
+
+	Onyx:Connect(UserInputService.InputChanged, function(input)
+		if not dragging then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		revealed = Clamp(input.Position.X - startX, 0, maxWidth - width)
+		render(revealed / (maxWidth - width), false)
+	end)
+
+	Onyx:Connect(UserInputService.InputEnded, function(input)
+		if not dragging or not IsClick(input) then return end
+		dragging = false
+		ClearFocus(handle)
+
+		-- a tap (barely moved) toggles just like crossing the threshold does;
+		-- a drag that fell short simply springs back with nothing committed
+		if revealed <= 6 or revealed >= threshold then
+			commit()
+		end
+		render(0, true)
+	end)
+
+	function state.Refresh()
+		if state.Dead then return end
+		state.Owner = ClaimShared(EDGE_OWNER, EDGE_BEAT)
+		handle.Visible = state.Owner
+
+		local n = Onyx.InstanceCount()
+		count.Text = tostring(n)
+		count.TextTransparency = n > 1 and 0 or 1
+
+		if not dragging then render(0, true) end
+	end
+
+	table.insert(Onyx.Teardown, function()
+		state.Dead = true
+		pcall(function() handle:Destroy() end)
+		ReleaseShared(EDGE_OWNER)
+	end)
+
+	state.Refresh()
+	task.spawn(function()
+		while not state.Dead and not Onyx.Unloaded do
+			task.wait(2)
+			if state.Dead or Onyx.Unloaded then return end
+			pcall(state.Refresh)
+		end
+	end)
+
+	return state
 end
 
 -- ================================================================
@@ -1966,6 +2116,7 @@ function Onyx.CreateWindow(a, b)
 		if p1 ~= Window then state = p1 end
 		Window.Visible = state and true or false
 		if Window.Unibar and Window.Unibar.Paint then Window.Unibar.Paint(false) end
+		if Window.EdgeHandle and Window.EdgeHandle.Refresh then Window.EdgeHandle.Refresh() end
 		if Window.Registry then Window.Registry.Publish() end
 		if Window.Visible then
 			Shell.Visible = true
@@ -1987,6 +2138,7 @@ function Onyx.CreateWindow(a, b)
 		SetFocus(nil)
 		if Window.Registry then Window.Registry.Remove() end
 		if Window.Unibar then Window.Unibar.Dead = true end
+		if Window.EdgeHandle then Window.EdgeHandle.Dead = true end
 		Shell:Destroy()
 		for i, w in ipairs(Onyx.Windows) do
 			if w == Window then table.remove(Onyx.Windows, i); break end
@@ -2184,59 +2336,77 @@ function Onyx.CreateWindow(a, b)
 		Window.MobileButton = fab
 	end
 
-	local unibar = cfg.UnibarIcon ~= false and AttachUnibarIcon(Window) or nil
-	Window.Unibar = unibar
-	Window.FallbackDelay = tonumber(cfg.FallbackDelay) or 4
-
-	-- Existing is not the same as reachable. A game can hide the topbar or
-	-- cover it at any point, including long after the window was built, so
-	-- this is asked again on every pass rather than once at startup.
-	-- The shared icon, not ours specifically: a script that does not own the
-	-- icon is still reachable through it, and must not stack up a second
-	-- floating button of its own.
-	function Window.IconUsable()
-		if cfg.UnibarIcon == false then return false end
-
-		local icon = Onyx.TopbarIcon()
-		if not icon or not icon.Parent then return false end
-
-		local ok, usable = pcall(function()
-			if not icon.Visible or icon.AbsoluteSize.X <= 0 then return false end
-
-			local node = icon.Parent
-			while node and node:IsA("GuiObject") do
-				if not node.Visible then return false end
-				node = node.Parent
-			end
-
-			-- the inset collapsing is the clearest sign the topbar is gone
-			local rect = GuiService.TopbarInset
-			local height = rect and tonumber(rect.Height)
-			if height and height <= 0 then return false end
-			return true
-		end)
-		return ok and usable or false
+	-- Two ways in, script's choice. "unibar" (default) is everything above:
+	-- a topbar icon with a floating button as its fallback. "edge" skips
+	-- CoreGui entirely for a translucent strip on the left edge that opens
+	-- on a tap or a drag past its threshold - never blocked by a game hiding
+	-- its own topbar, since there is no topbar involved.
+	local accessMethod = tostring(cfg.AccessMethod or "unibar"):lower()
+	if accessMethod ~= "unibar" and accessMethod ~= "edge" then
+		warn('[Onyx] AccessMethod must be "unibar" or "edge" (got "'
+			.. tostring(cfg.AccessMethod) .. '"); using "unibar"')
+		accessMethod = "unibar"
 	end
+	Window.AccessMethod = accessMethod
 
-	local startedAt = os.clock()
+	if accessMethod == "edge" then
+		if cfg.MobileButton == true then buildFloatingButton() end
+		Window.EdgeHandle = AttachEdgeHandle(Window, cfg)
+	else
+		local unibar = cfg.UnibarIcon ~= false and AttachUnibarIcon(Window) or nil
+		Window.Unibar = unibar
+		Window.FallbackDelay = tonumber(cfg.FallbackDelay) or 4
 
-	function Window.UpdateFallback()
-		if cfg.MobileButton == false then return end
+		-- Existing is not the same as reachable. A game can hide the topbar or
+		-- cover it at any point, including long after the window was built, so
+		-- this is asked again on every pass rather than once at startup.
+		-- The shared icon, not ours specifically: a script that does not own
+		-- the icon is still reachable through it, and must not stack up a
+		-- second floating button of its own.
+		function Window.IconUsable()
+			if cfg.UnibarIcon == false then return false end
 
-		local wanted
-		if cfg.MobileButton == true then
-			wanted = true
-		elseif os.clock() - startedAt < Window.FallbackDelay then
-			return   -- the unibar streams in after the join; do not judge it yet
-		else
-			wanted = not Window.IconUsable()
+			local icon = Onyx.TopbarIcon()
+			if not icon or not icon.Parent then return false end
+
+			local ok, usable = pcall(function()
+				if not icon.Visible or icon.AbsoluteSize.X <= 0 then return false end
+
+				local node = icon.Parent
+				while node and node:IsA("GuiObject") do
+					if not node.Visible then return false end
+					node = node.Parent
+				end
+
+				-- the inset collapsing is the clearest sign the topbar is gone
+				local rect = GuiService.TopbarInset
+				local height = rect and tonumber(rect.Height)
+				if height and height <= 0 then return false end
+				return true
+			end)
+			return ok and usable or false
 		end
 
-		if wanted then buildFloatingButton() end
-		if Window.MobileButton then Window.MobileButton.Visible = wanted end
-	end
+		local startedAt = os.clock()
 
-	if cfg.MobileButton == true then buildFloatingButton() end
+		function Window.UpdateFallback()
+			if cfg.MobileButton == false then return end
+
+			local wanted
+			if cfg.MobileButton == true then
+				wanted = true
+			elseif os.clock() - startedAt < Window.FallbackDelay then
+				return   -- the unibar streams in after the join; do not judge it yet
+			else
+				wanted = not Window.IconUsable()
+			end
+
+			if wanted then buildFloatingButton() end
+			if Window.MobileButton then Window.MobileButton.Visible = wanted end
+		end
+
+		if cfg.MobileButton == true then buildFloatingButton() end
+	end
 
 	Window.Registry = RegisterInstance(Window, title, subTitle)
 
@@ -2244,7 +2414,7 @@ function Onyx.CreateWindow(a, b)
 		while not Window.Destroyed and not Onyx.Unloaded do
 			task.wait(2)
 			if Window.Destroyed or Onyx.Unloaded then return end
-			pcall(Window.UpdateFallback)
+			if Window.UpdateFallback then pcall(Window.UpdateFallback) end
 			if Window.Registry then Window.Registry.Publish() end
 		end
 	end)
