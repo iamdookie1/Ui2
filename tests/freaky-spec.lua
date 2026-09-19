@@ -404,29 +404,58 @@ do
 	MOCK.step(0.6)
 	assert(liveSlots() == 3, "expected the stack to cap at 3, got " .. liveSlots())
 
-	-- a long message is height-capped rather than allowed to climb
-	Freaky:Notify({ Title = "Long", Content = string.rep("word ", 120), Duration = 0 })
+	-- a toast has a real height rather than one measured from its contents:
+	-- the version that measured itself rendered nothing at all
+	local short = Freaky:Notify({ Title = "Short", Duration = 0 })
+	local shortSlot = short.Instance.Parent
+	assert(shortSlot.Size.Y.Offset == 38, "a title-only toast should be 38 tall, got "
+		.. shortSlot.Size.Y.Offset)
+	assert(shortSlot.AutomaticSize == nil or shortSlot.AutomaticSize == Enum.AutomaticSize.None,
+		"a toast slot must not measure itself")
+	assert(short.Instance.Size.Y.Scale == 1, "the card should fill its slot")
+	short.Close()
+
+	-- and a long message does not make it any taller
+	local long = Freaky:Notify({
+		Title = "Long", Content = string.rep("word ", 120), Duration = 0,
+	})
 	MOCK.step(0.6)
-	local body
-	for _, inst in ipairs(MOCK.allInstances) do
-		if inst.ClassName == "TextLabel" and inst.Parent and inst.Parent.Name == "Toast"
-			and string.find(inst.Text, "word", 1, true) then body = inst end
-	end
+	local longSlot = long.Instance.Parent
+	assert(longSlot.Size.Y.Offset == 56, "a toast with content should be 56 tall, got "
+		.. longSlot.Size.Y.Offset)
+
+	local body = long.Instance:FindFirstChild("Content")
 	assert(body, "long toast body missing")
-	local cap = body:FindFirstChildOfClass("UISizeConstraint")
-	assert(cap and cap.MaxSize.Y <= 30, "toast body is not height-capped")
+	assert(body.Size.Y.Offset <= 24, "the body should be a fixed two lines")
+	assert(body.TextTruncate == Enum.TextTruncate.AtEnd, "the body should truncate")
+	assert(body:FindFirstChildOfClass("UISizeConstraint") == nil,
+		"a fixed-size body does not need a size constraint")
+
+	-- every part of a toast must be laid out by hand, not by a list
+	assert(long.Instance:FindFirstChildOfClass("UIListLayout") == nil,
+		"a toast must not be laid out by a list: its decoration is not a list item")
 
 	-- a toast is dressed rather than a plain rectangle, and shows its clock
-	local dressed = body.Parent
+	local dressed = long.Instance
 	assert(dressed:FindFirstChild("Wash"), "the toast has no wash")
 	assert(dressed:FindFirstChild("Wash"):FindFirstChildOfClass("UIGradient"),
 		"the wash should be a gradient, not a flat tint")
 	assert(dressed:FindFirstChild("Edge"), "the toast has no accent edge")
+	assert(dressed:FindFirstChild("Spark"), "the toast has no mark")
+
 	local timed = Freaky:Notify({ Title = "Timed", Duration = 2 })
 	local lane = timed.Instance:FindFirstChild("Timer")
 	assert(lane, "a toast with a duration should show a timer")
-	assert(lane:GetChildren()[1].Size.X.Scale == 0, "the timer should drain to empty")
+	assert(lane:FindFirstChild("Fill").Size.X.Scale == 0, "the timer should drain to empty")
 	timed.Close()
+
+	-- closing collapses the slot so the stack closes the gap behind it
+	local closing = Freaky:Notify({ Title = "Closing", Duration = 0 })
+	local closingSlot = closing.Instance.Parent
+	closing.Close()
+	assert(closingSlot.Size.Y.Offset == 0, "a closing toast should collapse its slot")
+	MOCK.step(0.5)
+	assert(closingSlot.Parent == nil, "a closed toast should clean itself up")
 
 	for _, inst in ipairs(MOCK.allInstances) do
 		if inst.Name == "Slot" and inst.Parent and inst.Parent.Name == "Stack" then
@@ -636,11 +665,19 @@ do
 	row.MouseLeave:Fire()
 	assert(bar.Size.Y.Scale == 0, "leaving should retract it")
 
+	-- pressing must not change any size: a row measures its own height, so
+	-- an effect that grows inside it drags the row along with it
+	local before = row.Size
 	row.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 0, 0) })
-	local ring = row:FindFirstChild("Ripple")
-	assert(ring, "pressing a row should leave a ripple")
+	local glow = row:FindFirstChild("Flash")
+	assert(glow, "pressing a row should flash it")
+	assert(glow.Size.X.Scale == 1 and glow.Size.Y.Scale == 1,
+		"the flash must be sized from the row, not in pixels")
+	assert(glow.Size.X.Offset == 0 and glow.Size.Y.Offset == 0,
+		"the flash must not add any offset size")
+	assert(row.Size.Y.Offset == before.Y.Offset, "pressing changed the row's height")
 	MOCK.step(0.6)
-	assert(ring.Parent == nil, "the ripple should clean itself up")
+	assert(glow.Parent == nil, "the flash should clean itself up")
 
 	-- opening the sidebar sweeps a line down the panel
 	Window:SetOpen(false)
@@ -660,20 +697,112 @@ do
 	lit:Set(false)
 	assert(trackGradient.Enabled == false, "turning it off should stop the gradient")
 
-	-- sections are dealt in one after another
+	-- section headings are dealt in one after another when a tab opens
 	local Deal = Player:CreateSection("Deal")
 	Deal:Label("something")
 	assert(#Player.Sections >= 1, "the tab does not track its sections")
-	Player:Select()
-	assert(Player.Sections[1].GroupTransparency == 1, "sections should start hidden on select")
-	MOCK.step(0.5)
-	assert(Player.Sections[1].GroupTransparency == 0, "sections should fade in")
-	Main:Select()
-	MOCK.step(0.5)
 
-	-- section headings are marked, not just lettered
 	local head = Deal.Instance:FindFirstChild("Head")
-	assert(head and head:FindFirstChild("Tick"), "a section heading has no accent tick")
+	assert(head, "a section has no heading row")
+	local tick = head:FindFirstChild("Tick")
+	assert(tick, "a section heading has no accent tick")
+
+	Player:Select()
+	assert(tick.Size.X.Offset == 0, "the tick should start collapsed on select")
+	assert(head:FindFirstChild("Title").TextTransparency == 1,
+		"the heading should start faded on select")
+	MOCK.step(0.6)
+	assert(tick.Size.X.Offset == 10, "the tick should draw itself in")
+	assert(head:FindFirstChild("Title").TextTransparency == 0,
+		"the heading should fade up")
+
+	-- the reveal must never touch anything that carries layout: a section
+	-- measures its own height, so its parts stay the size they end up
+	assert(Deal.Instance.ClassName == "Frame",
+		"a section that measures itself should be a plain Frame")
+	Main:Select()
+	MOCK.step(0.6)
+end
+
+--------------------------------------------------------------------
+-- layout rules, checked over the whole tree
+--------------------------------------------------------------------
+--
+-- Roblox sizes an AutomaticSize parent from its children's offsets and
+-- ignores their scales. Two ways to break that, both of which shipped:
+--
+--   * put a child sized from its container inside a list layout that is
+--     sizing that container - the toast did this with its wash and edge
+--     bar, and the circle resolved to a card with no height at all
+--   * put a big offset-sized child inside a parent that measures its
+--     children - the press ripple did this, and a pressed row grew to the
+--     height of the ripple
+--
+-- Neither is visible in a unit test of behaviour, so they are checked
+-- structurally instead, over everything the suite has built.
+do
+	local MAX_CHILD = 300
+
+	local function listOf(inst)
+		for _, child in ipairs(inst:GetChildren()) do
+			if child.ClassName == "UIListLayout" then return child end
+		end
+	end
+
+	local function autoY(inst)
+		return inst.AutomaticSize == Enum.AutomaticSize.Y
+			or inst.AutomaticSize == Enum.AutomaticSize.XY
+	end
+
+	local function autoX(inst)
+		return inst.AutomaticSize == Enum.AutomaticSize.X
+			or inst.AutomaticSize == Enum.AutomaticSize.XY
+	end
+
+	local function where(inst)
+		local trail, walk = inst.Name, inst.Parent
+		for _ = 1, 4 do
+			if not walk then break end
+			trail = walk.Name .. "/" .. trail
+			walk = walk.Parent
+		end
+		return trail
+	end
+
+	local listBugs, sizeBugs = {}, {}
+
+	for _, inst in ipairs(MOCK.allInstances) do
+		if inst.Parent and inst:IsA("GuiObject") then
+			local layout = listOf(inst)
+			local vertical = layout and layout.FillDirection ~= Enum.FillDirection.Horizontal
+
+			for _, child in ipairs(inst:GetChildren()) do
+				if child:IsA("GuiObject") then
+					if layout and vertical and autoY(inst) and child.Size.Y.Scale > 0 then
+						table.insert(listBugs, where(child) .. " is "
+							.. child.Size.Y.Scale .. " of the height it helps measure")
+					end
+					if layout and not vertical and autoX(inst) and child.Size.X.Scale > 0 then
+						table.insert(listBugs, where(child) .. " is "
+							.. child.Size.X.Scale .. " of the width it helps measure")
+					end
+					if autoY(inst) and child.Size.Y.Offset > MAX_CHILD then
+						table.insert(sizeBugs, where(child) .. " is "
+							.. child.Size.Y.Offset .. "px tall inside a parent that measures it")
+					end
+					if autoX(inst) and child.Size.X.Offset > MAX_CHILD then
+						table.insert(sizeBugs, where(child) .. " is "
+							.. child.Size.X.Offset .. "px wide inside a parent that measures it")
+					end
+				end
+			end
+		end
+	end
+
+	assert(#listBugs == 0, "list layout sizing itself from its own children:\n  "
+		.. table.concat(listBugs, "\n  "))
+	assert(#sizeBugs == 0, "oversized child of a self-measuring parent:\n  "
+		.. table.concat(sizeBugs, "\n  "))
 end
 
 --------------------------------------------------------------------

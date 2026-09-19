@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  FREAKY UI  ·  v2.0.0
+	  FREAKY UI  ·  v2.1.0
 	  A loud sidebar interface library for Roblox script executors.
 	  (Formerly LoveUI, which was pink and polite. This one is neither.)
 	================================================================
@@ -52,7 +52,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Freaky = {
 	Name        = "FreakyUI",
-	Version     = "2.0.0",
+	Version     = "2.1.0",
 
 	Windows     = {},
 	Flags       = {},
@@ -361,34 +361,27 @@ Freaky:Connect(RunService.RenderStepped, function(delta)
 	end
 end)
 
--- A ring that grows out of wherever you pressed and fades. It is the
--- cheapest way to make a flat row feel like it acknowledged you.
-local function Ripple(button, zIndex)
-	button.ClipsDescendants = true
+-- A press needs to be visible without changing anything's size. Rows size
+-- themselves to their contents, so a growing ring inside one makes the row
+-- grow with it - which is what the first version of this did, and it made
+-- a pressed row swell to the height of the ripple. This one only fades: a
+-- full-bleed tint that appears under the press and dies, scale-sized so it
+-- can never contribute a single pixel to a parent's measured height.
+local function Flash(button, zIndex)
 	button.InputBegan:Connect(function(input)
 		if not IsClick(input) then return end
 
-		local width = button.AbsoluteSize.X
-		if width <= 0 then width = 200 end
-		local reach = width * 2
-
-		local x = 0.5
-		if width > 0 and input.Position then
-			x = Clamp((input.Position.X - button.AbsolutePosition.X) / width, 0, 1)
-		end
-
-		local ring = New("Frame", {
-			Name = "Ripple", BorderSizePixel = 0, BackgroundTransparency = 0.72,
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(x, 0.5),
-			Size = UDim2.fromOffset(0, 0), ZIndex = (zIndex or 8) - 1, Parent = button,
+		local glow = New("Frame", {
+			Name = "Flash", BorderSizePixel = 0, BackgroundTransparency = 0.7,
+			Size = UDim2.fromScale(1, 1), ZIndex = (zIndex or 8) - 1, Parent = button,
 		})
-		Corner(999, ring)
-		Paint(ring, "BackgroundColor3", "Accent")
+		Corner(8, glow)
+		Paint(glow, "BackgroundColor3", "Accent")
+		Fade(glow, { { 0, 0.25 }, { 1, 1 } }, 0)
 
-		Tween(ring, {
-			Size = UDim2.fromOffset(reach, reach), BackgroundTransparency = 1,
-		}, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out))
-		task.delay(0.5, function() if ring.Parent then ring:Destroy() end end)
+		Tween(glow, { BackgroundTransparency = 1 },
+			TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out))
+		task.delay(0.45, function() if glow.Parent then glow:Destroy() end end)
 	end)
 end
 
@@ -700,6 +693,15 @@ local ToastStack = New("Frame", {
 local toastOrder = 0
 local liveToasts = {}
 
+-- Toasts are laid out by hand, on purpose. An earlier version hung them off
+-- a UIListLayout with AutomaticSize, then added a full-size wash and a
+-- full-height edge bar as decoration - both of which the layout treated as
+-- list items sized from the card the layout was sizing. That circle resolves
+-- to nothing, which is exactly what it rendered. Fixed heights, absolute
+-- positions, and decoration that is never a layout item.
+local TOAST_TALL  = 56   -- title and body
+local TOAST_SHORT = 38   -- title only
+
 function Freaky.Notify(a, b)
 	local cfg = b
 	if a ~= Freaky then cfg = a end
@@ -707,6 +709,9 @@ function Freaky.Notify(a, b)
 	cfg = cfg or {}
 
 	local duration = tonumber(cfg.Duration) or 3
+	local content = cfg.Content
+	if content == "" then content = nil end
+	local height = content and TOAST_TALL or TOAST_SHORT
 	toastOrder = toastOrder + 1
 
 	-- push the oldest out rather than letting the stack grow upwards
@@ -716,29 +721,30 @@ function Freaky.Notify(a, b)
 		if oldest then oldest() end
 	end
 
+	-- the slot holds the row in the stack; the card slides inside it
 	local slot = New("Frame", {
-		Name = "Slot", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = toastOrder,
+		Name = "Slot", BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, height), LayoutOrder = toastOrder,
 		ZIndex = 502, Parent = ToastStack,
 	})
 
 	local card = New("Frame", {
 		Name = "Toast", BackgroundTransparency = 1, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, ClipsDescendants = true,
+		Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, 0, 1, 0),
 		ZIndex = 502, Parent = slot,
 	})
-	Corner(7, card)
+	Corner(8, card)
 	Paint(card, "BackgroundColor3", "Panel")
 	local cardStroke = Stroke(card, "Line", 1)
 
-	-- the card is not a flat rectangle: a wash of the accent runs across it
-	-- and a bar marks the left edge, so a toast reads as part of the library
+	-- decoration: a wash of the accent across the card and a gradient bar
+	-- down its left edge. Both are sized from the card, which is fine now
+	-- that the card's own height is a number rather than a measurement.
 	local wash = New("Frame", {
-		Name = "Wash", BorderSizePixel = 0, BackgroundTransparency = 0.88,
+		Name = "Wash", BorderSizePixel = 0, BackgroundTransparency = 0.86,
 		Size = UDim2.fromScale(1, 1), ZIndex = 502, Parent = card,
 	})
-	Corner(7, wash)
+	Corner(8, wash)
 	Paint(wash, "BackgroundColor3", "Accent")
 	Fade(wash, { { 0, 0.35 }, { 0.75, 1 }, { 1, 1 } }, 0)
 
@@ -749,52 +755,52 @@ function Freaky.Notify(a, b)
 	Paint(edge, "BackgroundColor3", "Accent")
 	Sheen(edge, 90)
 
-	Padding(card, 6, 7, 9, 8)
-	List(card, 2)
-
-	local mark = Spark(card, 10, 504)
-	mark.Instance.AnchorPoint = Vector2.new(0, 0)
-	mark.Instance.Position = UDim2.fromOffset(0, 1)
-	mark.Instance.LayoutOrder = 0
+	local mark = Spark(card, 11, 504)
+	mark.Instance.AnchorPoint = Vector2.new(0, 0.5)
+	mark.Instance.Position = UDim2.new(0, 12, 0, content and 17 or height / 2)
 	mark.SetTransparency(1)
 
 	local titleLabel = Text({
-		Parent = card, ZIndex = 504, Font = FONT_SB, TextSize = 11.5, LayoutOrder = 1,
+		Name = "Title", Parent = card, ZIndex = 504, Font = FONT_SB, TextSize = 12,
 		Text = tostring(cfg.Title or "FreakyUI"), TextTransparency = 1,
-		TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 13),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Position = UDim2.new(0, 28, 0, content and 9 or 0),
+		Size = UDim2.new(1, -38, 0, content and 14 or height),
 	})
 
 	local bodyLabel
-	if cfg.Content and cfg.Content ~= "" then
-		-- capped at two lines: a toast is a nudge, not a paragraph, and
-		-- AutomaticSize would happily grow past the top of the screen
+	if content then
 		bodyLabel = Text({
-			Parent = card, ZIndex = 504, Font = FONT, TextSize = 10.5, LayoutOrder = 2,
-			Token = "Sub", Text = tostring(cfg.Content), TextWrapped = true,
+			Name = "Content", Parent = card, ZIndex = 504, Font = FONT, TextSize = 11,
+			Token = "Sub", Text = tostring(content), TextWrapped = true,
 			TextYAlignment = Enum.TextYAlignment.Top, TextTransparency = 1,
 			TextTruncate = Enum.TextTruncate.AtEnd,
-			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-		})
-		New("UISizeConstraint", {
-			MaxSize = Vector2.new(TOAST_WIDTH, 28), Parent = bodyLabel,
+			Position = UDim2.fromOffset(28, 25),
+			Size = UDim2.new(1, -38, 0, 24),
 		})
 	end
 
-	-- a hairline under the card that drains for however long it is up, so
-	-- the toast shows its own clock instead of vanishing out of nowhere
-	local timerLane, timerFill
+	-- a hairline that drains for however long the toast is up, so it shows
+	-- its own clock instead of vanishing out of nowhere
+	local timerFill
 	if duration > 0 then
-		timerLane = New("Frame", {
-			Name = "Timer", BorderSizePixel = 0, BackgroundTransparency = 1,
+		local lane = New("Frame", {
+			Name = "Timer", BackgroundTransparency = 1, ClipsDescendants = true,
 			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, 0),
 			Size = UDim2.new(1, 0, 0, 2), ZIndex = 504, Parent = card,
 		})
 		timerFill = New("Frame", {
-			BorderSizePixel = 0, BackgroundTransparency = 0.35,
-			Size = UDim2.fromScale(1, 1), ZIndex = 504, Parent = timerLane,
+			Name = "Fill", BorderSizePixel = 0, BackgroundTransparency = 0.3,
+			Size = UDim2.fromScale(1, 1), ZIndex = 504, Parent = lane,
 		})
 		Paint(timerFill, "BackgroundColor3", "Accent")
+		Sheen(timerFill, 0)
 	end
+
+	local hit = New("TextButton", {
+		Name = "Hit", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+		Size = UDim2.fromScale(1, 1), ZIndex = 505, Parent = card,
+	})
 
 	Tween(card, { BackgroundTransparency = 0.04, Position = UDim2.fromOffset(0, 0) }, EASE_SMOOTH)
 	Tween(cardStroke, { Transparency = 0.2 }, EASE_SMOOTH)
@@ -818,20 +824,21 @@ function Freaky.Notify(a, b)
 		for i, fn in ipairs(liveToasts) do
 			if fn == close then table.remove(liveToasts, i); break end
 		end
-		Tween(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 0) }, EASE_OUT)
+		Tween(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(26, 0) }, EASE_OUT)
 		Tween(cardStroke, { Transparency = 1 }, EASE_OUT)
 		Tween(edge, { BackgroundTransparency = 1 }, EASE_OUT)
 		Tween(wash, { BackgroundTransparency = 1 }, EASE_OUT)
 		Tween(titleLabel, { TextTransparency = 1 }, EASE_OUT)
 		if bodyLabel then Tween(bodyLabel, { TextTransparency = 1 }, EASE_OUT) end
 		if timerFill then Tween(timerFill, { BackgroundTransparency = 1 }, EASE_OUT) end
-		task.delay(0.25, function() if slot then slot:Destroy() end end)
+		for _, part in ipairs(mark.Parts) do
+			Tween(part, { BackgroundTransparency = 1 }, EASE_OUT)
+		end
+		-- the slot collapses so the stack closes the gap behind it
+		Tween(slot, { Size = UDim2.new(1, 0, 0, 0) }, EASE_OUT)
+		task.delay(0.3, function() if slot then slot:Destroy() end end)
 	end
 
-	local hit = New("TextButton", {
-		BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-		Size = UDim2.fromScale(1, 1), ZIndex = 505, Parent = card,
-	})
 	hit.MouseButton1Click:Connect(close)
 
 	table.insert(liveToasts, close)
@@ -927,7 +934,7 @@ local function Row(parent, opts)
 	-- the two things that stop a row being a rectangle: an accent bar that
 	-- grows on hover, and a ring that comes out of wherever you pressed
 	local edge = EdgeBar(row, 7)
-	if opts.Ripple ~= false then Ripple(row, 7) end
+	if opts.Flash ~= false then Flash(row, 7) end
 
 	return { Row = row, Stroke = rowStroke, Slot = slot, Title = titleLabel, Edge = edge }
 end
@@ -1191,15 +1198,10 @@ local function ElementAPI(holder, parent)
 		Corner(7, knob)
 		Paint(knob, "BackgroundColor3", "Accent")
 
-		-- a halo behind the knob that blooms while you drag, so the thing
-		-- under your finger is obviously the thing that is moving
-		local halo = New("Frame", {
-			Name = "Halo", BorderSizePixel = 0, BackgroundTransparency = 1,
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(13, 13), ZIndex = 8, Parent = knob,
-		})
-		Corner(999, halo)
-		Paint(halo, "BackgroundColor3", "Accent")
+		-- the knob glows by growing its stroke rather than a halo frame: a
+		-- UIStroke draws outside the object and is never measured by a
+		-- parent that sizes itself to its contents
+		local halo = Stroke(knob, "Accent", 0.6, 0)
 
 		local api = { Instance = row, Type = "Slider", Value = min, Callback = cfg.Callback }
 
@@ -1256,8 +1258,7 @@ local function ElementAPI(holder, parent)
 			if not IsClick(input) then return end
 			dragging = true
 			Tween(knob, { Size = UDim2.fromOffset(17, 17) }, EASE_POP)
-			Tween(halo, { Size = UDim2.fromOffset(34, 34), BackgroundTransparency = 0.72 }, EASE_OUT)
-			Tween(valueLabel, { TextSize = 14 }, EASE_POP)
+			Tween(halo, { Thickness = 5, Transparency = 0.35 }, EASE_OUT)
 			apply(input.Position.X)
 		end)
 		Freaky:Connect(UserInputService.InputChanged, function(input)
@@ -1270,8 +1271,7 @@ local function ElementAPI(holder, parent)
 			if not dragging or not IsClick(input) then return end
 			dragging = false
 			Tween(knob, { Size = UDim2.fromOffset(13, 13) }, EASE_POP)
-			Tween(halo, { Size = UDim2.fromOffset(13, 13), BackgroundTransparency = 1 }, EASE_OUT)
-			Tween(valueLabel, { TextSize = 12.5 }, EASE_OUT)
+			Tween(halo, { Thickness = 0, Transparency = 0.6 }, EASE_OUT)
 		end)
 
 		function api.SetTitle(a, t) titleLabel.Text = tostring(a ~= api and a or t) end
@@ -2757,10 +2757,7 @@ function Freaky.CreateWindow(a, b)
 		Padding(pill, 0, 0, 14, 14)
 		local pillSheen = Sheen(pill, 0)
 		pillSheen.Enabled = false
-		Ripple(pill, 13)
-		-- a pill is sized by its own text, so it cannot be tweened wider;
-		-- a UIScale pops it instead
-		local pillScale = New("UIScale", { Scale = 1, Parent = pill })
+		Flash(pill, 13)
 
 		local pillLabel = Text({
 			Parent = pill, ZIndex = 13, Font = FONT_M, TextSize = 13, Token = "Sub",
@@ -2795,12 +2792,8 @@ function Freaky.CreateWindow(a, b)
 				if entry.Instance == pill then entry.Token = active and "Accent" or "Card" end
 				if entry.Instance == pillLabel then entry.Token = active and "OnAccent" or "Sub" end
 			end
-			if active then
-				Tween(pillScale, { Scale = 1.1 }, EASE_POP)
-				task.delay(0.16, function()
-					if pill.Parent then Tween(pillScale, { Scale = 1 }, EASE_POP) end
-				end)
-			end
+			-- no scale pop here: the strip sizes itself to its pills, so
+			-- growing one shoves the rest sideways
 		end
 
 		function Tab.Select()
@@ -2835,16 +2828,9 @@ function Freaky.CreateWindow(a, b)
 				GroupTransparency = 0, Position = UDim2.fromOffset(0, 0),
 			}, EASE_SMOOTH)
 
-			-- and the sections are dealt in behind it, one after another
+			-- and the headings are dealt in behind it, one after another
 			for index, section in ipairs(Tab.Sections) do
-				if section.Parent then
-					section.GroupTransparency = 1
-					task.delay(0.04 * index, function()
-						if section.Parent and Window.ActiveTab == Tab then
-							Tween(section, { GroupTransparency = 0 }, EASE_SMOOTH)
-						end
-					end)
-				end
+				if section.Reveal then section.Reveal(0.05 * index) end
 			end
 
 			paintPill(true)
@@ -2868,7 +2854,10 @@ function Freaky.CreateWindow(a, b)
 			if typeof(scfg) == "string" then scfg = { Title = scfg } end
 			scfg = scfg or {}
 
-			local holder = New("CanvasGroup", {
+			-- a plain Frame, not a CanvasGroup: a section measures its own
+			-- height, and a class that renders its children to a texture is
+			-- not somewhere to put a measurement you depend on
+			local holder = New("Frame", {
 				Name = "Section", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = #page:GetChildren(),
 				ZIndex = 11, Parent = page,
@@ -2890,11 +2879,26 @@ function Freaky.CreateWindow(a, b)
 			Paint(tick, "BackgroundColor3", "Accent")
 			Drift(Sheen(tick, 0), 40)
 
-			Text({
+			local headText = Text({
 				Name = "Title", Parent = headRow, ZIndex = 11, Font = FONT_B, TextSize = 12,
 				Token = "Muted", Text = string.upper(tostring(scfg.Title or "Section")),
 				Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -16, 1, 0),
 			})
+
+			-- the heading deals itself in when the tab opens: the tick draws
+			-- across and the word fades up behind it. Both are effects on
+			-- things that are already the size they will end up, so a
+			-- staggered reveal cannot shove the page around.
+			local function revealHead(delaySeconds)
+				if not holder.Parent then return end
+				tick.Size = UDim2.fromOffset(0, 2)
+				headText.TextTransparency = 1
+				task.delay(delaySeconds or 0, function()
+					if not holder.Parent then return end
+					Tween(tick, { Size = UDim2.fromOffset(10, 2) }, EASE_POP)
+					Tween(headText, { TextTransparency = 0 }, EASE_SMOOTH)
+				end)
+			end
 
 			local inner = New("Frame", {
 				Name = "Items", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
@@ -2904,13 +2908,14 @@ function Freaky.CreateWindow(a, b)
 			List(inner, 8)
 
 			local Section = { Instance = holder, Container = inner, Window = Window }
+			Section.Reveal = revealHead
 			function Section.Destroy()
 				for i, entry in ipairs(Tab.Sections) do
-					if entry == holder then table.remove(Tab.Sections, i); break end
+					if entry == Section then table.remove(Tab.Sections, i); break end
 				end
 				holder:Destroy()
 			end
-			table.insert(Tab.Sections, holder)
+			table.insert(Tab.Sections, Section)
 			ElementAPI(Section, inner)
 			return Section
 		end

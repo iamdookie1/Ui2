@@ -438,9 +438,15 @@ Freaky:Notify("short form")
 Toasts stack in the bottom-right corner, slide in, and remove themselves when
 their duration is up.
 
-They are deliberately small — 176px wide, two lines of body text at most, and
-the stack caps at three, pushing the oldest out rather than climbing the
-screen. Change the cap with `Freaky.MaxToasts = 5`.
+They are deliberately small and a fixed size — 176px wide, 38px tall for a
+title, 56px with a body — and the stack caps at three, pushing the oldest out
+rather than climbing the screen. Change the cap with `Freaky.MaxToasts = 5`.
+
+The height is a number rather than something measured from the contents, and
+the card is laid out by hand rather than by a list. That is deliberate: an
+earlier version measured itself *and* carried full-size decoration inside the
+layout doing the measuring, and a card sized from children sized from the card
+resolves to nothing at all, which is precisely what it drew.
 
 Each one carries the accent: a wash across the card, a gradient bar down the
 left edge, a spark that spins in as it lands, and a hairline underneath that
@@ -461,15 +467,34 @@ Nothing here just appears, and nothing is ever completely still.
 | The title | glitches sideways and snaps back when the palette changes |
 | The handle | breathes slowly while the sidebar is shut, so the strip at the screen edge reads as something you can grab |
 | Tab pages | cross-fade and slide — the outgoing page leaves the way it came in, the incoming one arrives from the other side |
-| Sections | are dealt in behind it, one after another |
-| Tab pills | pop on select, light up with the gradient, and ripple where you pressed |
-| Rows | grow an accent bar down the left edge on hover, and put a ring out from wherever you pressed |
+| Section headings | draw their tick across and fade their word up, one after another |
+| Tab pills | light up with the gradient and flash under a press |
+| Rows | grow an accent bar down the left edge on hover, and flash under a press |
 | Dropdowns | expand to a measured height, rows fading in one after another rather than a block appearing |
-| Sliders | bloom a halo around the knob while you drag, and the readout grows with it |
+| Sliders | bloom a glow around the knob while you drag |
 | Toggles | overshoot slightly, and the track only runs the gradient once it is lit |
 | Buttons | the chevron jumps forward and settles back, so a press that runs something silent still looks like it did something |
 | Backdrop sparks | drift upward and rotate, slowly enough that you only notice if you stop and look |
 | Toasts | slide in from the right, spin their spark, drain their timer line, and slide back out |
+
+---
+
+## One layout rule
+
+Roblox sizes an `AutomaticSize` parent from its children's **offsets**, and
+ignores their scales. Two ways to break that, both of which shipped once:
+
+- A child sized *from its container* inside a list layout that is sizing that
+  container. The toast did this, and drew nothing.
+- A big offset-sized child inside a parent that measures its children. The
+  press ripple did this, and a pressed row swelled to the height of the
+  ripple.
+
+So every effect in the library is now either scale-sized (ignored by
+measurement), a `UIStroke` (drawn outside the object, never measured), or
+inside something with a fixed height. The test suite walks the whole tree and
+fails on either shape, wherever it appears — the checks were verified against
+both original bugs before being kept.
 
 ---
 
