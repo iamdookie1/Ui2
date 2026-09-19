@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Runs the FreakyUI smoke suite against the mock Roblox environment.
+# Runs the Void test suite against a mock Roblox environment.
 #
-#   tests/freaky.sh
+#   tests/run.sh
 #
-# Same harness as run.sh, pointed at FreakyUI.lua instead of Ui.lua.
+# Needs the `luau` CLI. If it is not on PATH the script downloads the latest
+# Linux release into tests/.bin.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,15 +27,16 @@ fi
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
+# mock.lua ends in `return M`; splice it into one file with the library and spec
 {
 	sed '$ d' "$root/tests/mock.lua" | sed 's/^return M$//'
 	echo "MOCK = M"
 	echo
-	echo "function LoadFreaky()"
-	cat "$root/FreakyUI.lua"
+	echo "function LoadVoid()"
+	cat "$root/VoidUI.lua"
 	echo "end"
 	echo
-	cat "$root/tests/freaky-spec.lua"
+	cat "$root/tests/void-spec.lua"
 } > "$out/run.lua"
 
 "$luau_bin" "$out/run.lua"

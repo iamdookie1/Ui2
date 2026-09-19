@@ -39,11 +39,10 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/e
 
 ### Also in this repository
 
-**[FreakyUI](FreakyUI.md)** — a separate library, not a theme for this one: a
-loud sidebar that slides in from the left edge and widens when you keep
-pulling, with eight two-accent palettes, gradients on anything that holds
-state, and a lot more movement than this one. Edge access only. (It was called
-LoveUI until the rebrand.)
+**[Void](VoidUI.md)** — a separate library covering the same ground as this
+one, sharing none of its code: a floating window with a rail of tabs, the full
+element set, notifications and configs, done in black, four greys and a single
+white accent. Square corners, hairline borders, values in mono.
 
 ---
 
@@ -965,8 +964,8 @@ these are required — it degrades to `PlayerGui` in a plain LocalScript.
 | --- | --- |
 | `Ui.lua` | The library. This is the file you `loadstring`. |
 | `example.lua` | Feature demo covering every element. |
-| `FreakyUI.lua` | The sidebar library, documented in `FreakyUI.md`. |
-| `FreakyUI-example.lua` | Feature demo for FreakyUI. |
+| `VoidUI.lua` | The monochrome library, documented in `VoidUI.md`. |
+| `VoidUI-example.lua` | Feature demo for Void. |
 | `tests/` | Mock Roblox environment and the test suites. |
 
 ## Development
@@ -978,6 +977,6 @@ trips and teardown. It needs the `luau` CLI and downloads one into
 `tests/.bin` if there is not one on `PATH`.
 
 ```sh
-tests/run.sh       # Onyx
-tests/freaky.sh    # FreakyUI
+tests/run.sh     # Onyx
+tests/void.sh    # Void
 ```
