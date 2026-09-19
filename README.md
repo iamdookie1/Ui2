@@ -37,6 +37,12 @@ Run the full feature demo:
 loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/example.lua"))()
 ```
 
+### Also in this repository
+
+**[LoveUI](LoveUI.md)** — a separate library, not a theme for this one: a pink
+sidebar that slides in from the left edge, with six pink palettes you can swap
+at runtime. Smaller surface, edge access only.
+
 ---
 
 ## Design
@@ -957,7 +963,9 @@ these are required — it degrades to `PlayerGui` in a plain LocalScript.
 | --- | --- |
 | `Ui.lua` | The library. This is the file you `loadstring`. |
 | `example.lua` | Feature demo covering every element. |
-| `tests/` | Mock Roblox environment and the test suite. |
+| `LoveUI.lua` | The pink sidebar library, documented in `LoveUI.md`. |
+| `LoveUI-example.lua` | Feature demo for LoveUI. |
+| `tests/` | Mock Roblox environment and the test suites. |
 
 ## Development
 
@@ -968,5 +976,6 @@ trips and teardown. It needs the `luau` CLI and downloads one into
 `tests/.bin` if there is not one on `PATH`.
 
 ```sh
-tests/run.sh
+tests/run.sh      # Onyx
+tests/love.sh     # LoveUI
 ```
