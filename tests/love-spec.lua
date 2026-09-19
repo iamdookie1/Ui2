@@ -42,8 +42,13 @@ assert(Window.ActiveTab == Main, "first tab should auto-select")
 
 Player:Select()
 assert(Window.ActiveTab == Player, "Select did not switch tabs")
-assert(Main.Page.Visible == false, "the old page should hide")
+assert(Main.Wrap.GroupTransparency == 1, "the old page should fade out")
+assert(Player.Wrap.GroupTransparency == 0, "the new page should fade in")
+MOCK.step(0.4)
+assert(Main.Page.Visible == false, "the old page should hide once it has faded")
 Main:Select()
+MOCK.step(0.4)
+assert(Main.Page.Visible == true, "the selected page must be visible")
 
 local Combat = Main:CreateSection("Combat")
 assert(Combat, "no section")
@@ -94,10 +99,18 @@ drop:Set("Torso")
 assert(fired.part == "Torso" and Love.Flags.part == "Torso", "dropdown Set failed")
 drop:SetOpen(true)
 assert(drop.Open == true, "dropdown did not open")
+-- the list expands to a height rather than snapping open
+assert(drop.Instance:FindFirstChild("Options").Size.Y.Offset > 0,
+	"an open dropdown should have height")
 drop:SetValues({ "A", "B", "C" })
 drop:Set("B")
 assert(drop:Get() == "B", "dropdown SetValues did not rebuild the list")
 drop:SetOpen(false)
+assert(drop.Instance:FindFirstChild("Options").Size.Y.Offset == 0,
+	"a closed dropdown should collapse to nothing")
+MOCK.step(0.4)
+assert(drop.Instance:FindFirstChild("Options").Visible == false,
+	"a collapsed dropdown should end up hidden")
 
 local input = Combat:Input({ Title = "Name", Placeholder = "type here", Default = "",
 	Flag = "name", Callback = function(v) note("name", v) end })
@@ -168,20 +181,75 @@ assert(drawer.Position.X.Offset == -340, "drawer must clamp at the closed edge")
 MOCK.UIS.InputEnded:Fire(press(-900))
 assert(Window.Open == false, "dragging fully left should close it")
 
+-- dragging the handle right past flush widens the panel
+Window:SetOpen(true)
+Window:Collapse()
+handle.InputBegan:Fire(press(400))
+MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(520, 0, 0) })
+assert(Window.Width == 460, "dragging right should widen the panel, got " .. Window.Width)
+assert(drawer.Position.X.Offset == 0, "widening must not move the panel off the edge")
+MOCK.UIS.InputEnded:Fire(press(520))
+assert(Window.Open == true, "widening should leave it open")
+assert(Window.Width == 460, "the width should stick after the drag")
+
+-- dragging back left narrows it before it starts to close
+handle.InputBegan:Fire(press(520))
+MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(420, 0, 0) })
+assert(Window.Width == 360, "dragging left should narrow it first")
+MOCK.UIS.InputEnded:Fire(press(420))
+Window:Collapse()
+
+-- and from shut, one long drag opens it and keeps going into widening
+Window:SetOpen(false)
+handle.InputBegan:Fire(press(0))
+MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(420, 0, 0) })
+assert(drawer.Position.X.Offset == 0, "the drag should have carried it fully open")
+assert(Window.Width == 420, "and then widened it, got " .. Window.Width)
+MOCK.UIS.InputEnded:Fire(press(420))
+assert(Window.Open == true, "a drag through to widening should leave it open")
+Window:Collapse()
+
+-- a barely-there widen snaps back rather than leaving a ragged edge
+handle.InputBegan:Fire(press(400))
+MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(410, 0, 0) })
+MOCK.UIS.InputEnded:Fire(press(410))
+assert(Window.Width == 340, "a 10px widen should snap back to base")
+
 Window:SetOpen(true)
 assert(Window.Open == true, "SetOpen failed")
 
--- scale: the drawer has to travel further to hide when it is bigger
-assert(Window.Scale == 1, "scale should default to 1 on a keyboard device")
-Window:SetScale(1.2)
-assert(Window.Scale == 1.2, "SetScale did not take")
-assert(drawer:FindFirstChildOfClass("UIScale").Scale == 1.2, "UIScale not applied")
+-- widening: the panel grows sideways, it does not get taller
+assert(Window.Width == 340, "width should start at the configured width")
+local startHeight = drawer.Size.Y.Scale
+
+Window:Expand()
+assert(Window.Width == Window.MaxWidth, "Expand did not reach MaxWidth")
+assert(panel.Size.X.Offset == Window.MaxWidth, "the panel did not widen")
+assert(handle.Position.X.Offset == Window.MaxWidth + 4, "the handle did not follow")
+assert(drawer.Size.Y.Scale == startHeight, "widening must not change the height")
+
+Window:Collapse()
+assert(Window.Width == 340, "Collapse did not return to the base width")
+
+Window:SetWidth(5000)
+assert(Window.Width == Window.MaxWidth, "SetWidth must clamp to MaxWidth")
+Window:SetWidth(10)
+assert(Window.Width == 340, "SetWidth must clamp to the base width")
+
+-- a wide panel still hides completely
+Window:Expand()
 Window:SetOpen(false)
-assert(drawer.Position.X.Offset == -408, "a scaled sidebar must still hide fully")
+assert(drawer.Position.X.Offset == -Window.MaxWidth, "a widened sidebar must hide fully")
 Window:SetOpen(true)
-Window:SetScale(5)
-assert(Window.Scale == 2, "scale must clamp")
-Window:SetScale(1)
+Window:Collapse()
+
+-- the header control widens and narrows it too
+local widenBtn = panel:FindFirstChild("Header"):FindFirstChild("Widen")
+assert(widenBtn, "no widen control in the header")
+widenBtn.MouseButton1Click:Fire()
+assert(Window.Width == Window.MaxWidth, "the widen control did not expand the panel")
+widenBtn.MouseButton1Click:Fire()
+assert(Window.Width == 340, "the widen control did not collapse the panel")
 
 Window:SetTitle("Renamed")
 assert(panel:FindFirstChild("Header"):FindFirstChild("Title").Text == "Renamed",
@@ -295,7 +363,7 @@ do
 	end
 
 	local stack = find(function(i) return i.Name == "Stack" end)
-	assert(stack.Size.X.Offset <= 240, "the toast stack is too wide")
+	assert(stack.Size.X.Offset <= 180, "the toast stack is too wide")
 
 	-- the cap is the thing being tested, so prove the count tracks it
 	Love.MaxToasts = 5
@@ -318,7 +386,19 @@ do
 	end
 	assert(body, "long toast body missing")
 	local cap = body:FindFirstChildOfClass("UISizeConstraint")
-	assert(cap and cap.MaxSize.Y <= 60, "toast body is not height-capped")
+	assert(cap and cap.MaxSize.Y <= 30, "toast body is not height-capped")
+
+	-- a toast is dressed rather than a plain rectangle, and shows its clock
+	local dressed = body.Parent
+	assert(dressed:FindFirstChild("Wash"), "the toast has no wash")
+	assert(dressed:FindFirstChild("Wash"):FindFirstChildOfClass("UIGradient"),
+		"the wash should be a gradient, not a flat tint")
+	assert(dressed:FindFirstChild("Edge"), "the toast has no accent edge")
+	local timed = Love:Notify({ Title = "Timed", Duration = 2 })
+	local lane = timed.Instance:FindFirstChild("Timer")
+	assert(lane, "a toast with a duration should show a timer")
+	assert(lane:GetChildren()[1].Size.X.Scale == 0, "the timer should drain to empty")
+	timed.Close()
 
 	for _, inst in ipairs(MOCK.allInstances) do
 		if inst.Name == "Slot" and inst.Parent and inst.Parent.Name == "Stack" then
@@ -418,6 +498,46 @@ do
 	Love:SetTheme("Midnight")
 	Love:SetTheme("Rose")
 	Main:Select()
+end
+
+--------------------------------------------------------------------
+-- the panel has a backdrop rather than a flat fill
+--------------------------------------------------------------------
+do
+	local backdrop = panel:FindFirstChild("Backdrop")
+	assert(backdrop, "no backdrop layer")
+	assert(backdrop:FindFirstChild("Wash"), "no accent wash")
+	assert(backdrop:FindFirstChild("Glow1") and backdrop:FindFirstChild("Glow2"),
+		"expected two corner glows")
+
+	local hearts = 0
+	for _, child in ipairs(backdrop:GetChildren()) do
+		if child.Name == "Heart" then hearts = hearts + 1 end
+	end
+	assert(hearts >= 3, "expected hearts behind the content, found " .. hearts)
+
+	-- the backdrop follows a theme switch like everything else
+	local washColour = backdrop:FindFirstChild("Wash").BackgroundColor3
+	Love:SetTheme("Midnight")
+	assert(backdrop:FindFirstChild("Wash").BackgroundColor3 ~= washColour,
+		"the backdrop did not repaint with the theme")
+	Love:SetTheme("Rose")
+
+	-- and it can be turned off
+	local plain = Love:CreateWindow({ Title = "Plain", Background = "plain" })
+	local plainBack = plain.Instance:FindFirstChild("Panel"):FindFirstChild("Backdrop")
+	assert(plainBack and #plainBack:GetChildren() == 0, "Background = plain should draw nothing")
+	plain:Destroy()
+
+	local glowOnly = Love:CreateWindow({ Title = "Glow", Background = "glow" })
+	local glowBack = glowOnly.Instance:FindFirstChild("Panel"):FindFirstChild("Backdrop")
+	local glowHearts = 0
+	for _, child in ipairs(glowBack:GetChildren()) do
+		if child.Name == "Heart" then glowHearts = glowHearts + 1 end
+	end
+	assert(glowHearts == 0, "Background = glow should skip the hearts")
+	assert(glowBack:FindFirstChild("Wash"), "Background = glow still wants the wash")
+	glowOnly:Destroy()
 end
 
 --------------------------------------------------------------------

@@ -19,10 +19,12 @@ local Love = loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdooki
 local Window = Love:CreateWindow({
 	Title     = "Love Example",
 	SubTitle  = "v" .. Love.Version,
-	Theme     = "Rose",          -- Rose · Bubblegum · Wine · Midnight · Blush · Sakura
-	Width     = 290,             -- how far the sidebar slides in
-	Keybind   = Enum.KeyCode.RightShift,
-	StartOpen = false,           -- true to have it already open on load
+	Theme      = "Rose",         -- Rose · Bubblegum · Wine · Midnight · Blush · Sakura
+	Background = "hearts",       -- hearts · glow · plain
+	Width      = 300,            -- how far the sidebar slides in
+	MaxWidth   = 620,            -- how far it can be dragged open
+	Keybind    = Enum.KeyCode.RightShift,
+	StartOpen  = false,          -- true to have it already open on load
 })
 
 -- ================================================================
@@ -39,7 +41,9 @@ do
 		Title   = "About",
 		Content = "LoveUI is a sidebar, not a floating panel. It lives off the "
 			.. "left edge of the screen so it never covers the middle of your "
-			.. "game, and every theme it ships with is some shade of pink.",
+			.. "game, and every theme it ships with is some shade of pink. "
+			.. "Keep dragging the handle right once it is open and the panel "
+			.. "widens instead of getting taller.",
 	})
 
 	local Combat = Main:CreateSection("Combat")
@@ -290,15 +294,22 @@ do
 	})
 
 	Control:Slider({
-		Title     = "Scale",
-		Description = "Makes the whole sidebar bigger or smaller.",
-		Min       = 0.8,
-		Max       = 1.6,
-		Default   = 1,
-		Increment = 0.05,
-		Rounding  = 2,
-		Callback  = function(value)
-			Window:SetScale(value)
+		Title       = "Width",
+		Description = "Or drag the handle right once it is open.",
+		Min         = 300,
+		Max         = 620,
+		Default     = 300,
+		Increment   = 10,
+		Callback    = function(value)
+			Window:SetWidth(value)
+		end,
+	})
+
+	Control:Button({
+		Title       = "Widen / narrow",
+		Description = "Same as the chevrons in the header.",
+		Callback    = function()
+			Window:ToggleWidth()
 		end,
 	})
 

@@ -118,7 +118,21 @@ Color3 = {
 }
 
 NumberSequenceKeypoint = { new = function(t, v) return tag({ Time = t, Value = v }, "NumberSequenceKeypoint") end }
-NumberSequence = { new = function(a) return tag({ Keypoints = a }, "NumberSequence") end }
+NumberSequence = {
+	new = function(a)
+		-- Roblox rejects a sequence that does not span the whole range, and
+		-- the error only shows up in game, so check it here too
+		if type(a) == "table" then
+			assert(#a >= 2, "NumberSequence needs at least 2 keypoints")
+			assert(a[1].Time == 0, "NumberSequence keypoint times must start at 0")
+			assert(a[#a].Time == 1, "NumberSequence keypoint times must end at 1")
+			for i = 2, #a do
+				assert(a[i].Time > a[i - 1].Time, "NumberSequence keypoint times must increase")
+			end
+		end
+		return tag({ Keypoints = a }, "NumberSequence")
+	end,
+}
 ColorSequenceKeypoint = { new = function(t, v) return tag({ Time = t, Value = v }, "ColorSequenceKeypoint") end }
 ColorSequence = { new = function(a) return tag({ Keypoints = a }, "ColorSequence") end }
 TweenInfo = { new = function(...) return tag({ ... }, "TweenInfo") end }
@@ -225,6 +239,7 @@ local SCROLLING = {
 
 local SCHEMA = {
 	Frame          = set(INSTANCE, GUI_OBJECT),
+	CanvasGroup    = set(INSTANCE, GUI_OBJECT, { "GroupColor3", "GroupTransparency" }),
 	ScrollingFrame = set(INSTANCE, GUI_OBJECT, SCROLLING),
 	TextLabel      = set(INSTANCE, GUI_OBJECT, TEXT),
 	TextButton     = set(INSTANCE, GUI_OBJECT, GUI_BUTTON, TEXT),
@@ -259,6 +274,7 @@ local PARENT_CLASS = {
 	GuiLabel       = "GuiObject",
 	Frame          = "GuiObject",
 	ScrollingFrame = "GuiObject",
+	CanvasGroup    = "GuiObject",
 	TextBox        = "GuiObject",
 	TextButton     = "GuiButton",
 	ImageButton    = "GuiButton",

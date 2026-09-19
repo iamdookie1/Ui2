@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  LOVE UI  ·  v1.1.0
+	  LOVE UI  ·  v1.2.0
 	  A pink sidebar interface library for Roblox script executors.
 	================================================================
 
@@ -23,6 +23,10 @@
 	  edge of the screen and slides in. A translucent handle rides its right
 	  edge, so it is always reachable - drag it right to open, left to close.
 	  That handle is the only way in besides the keybind, by design.
+
+	  Keep dragging right once it is open and the panel widens: it grows
+	  sideways rather than taller, so it never becomes a column down the
+	  middle of your screen. The chevrons in the header do the same thing.
 	================================================================
 ]]
 
@@ -41,7 +45,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Love = {
 	Name        = "LoveUI",
-	Version     = "1.1.0",
+	Version     = "1.2.0",
 
 	Windows     = {},
 	Flags       = {},
@@ -139,6 +143,13 @@ local FONT_B  = Font("GothamBold", FONT_SB)
 local EASE_SNAP   = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EASE_OUT    = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EASE_SMOOTH = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+-- the drawer travels a long way, so it gets a longer curve that arrives slowly
+local EASE_DRAWER = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+-- a little overshoot, for things small enough that a bounce reads as playful
+-- rather than sloppy: the toggle knob, the heart, a pressed row
+local EASE_POP    = TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local EASE_EXPAND = TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local EASE_BEAT   = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local function New(class, props, children)
 	local obj = Instance.new(class)
@@ -167,6 +178,19 @@ local function Paint(obj, prop, token)
 	obj[prop] = Theme[token]
 	table.insert(Painted, { Instance = obj, Property = prop, Token = token })
 	return obj
+end
+
+-- a vertical wash of transparency, which is how every soft edge in the
+-- backdrop is drawn: no image assets, so nothing to fail to load
+local function Fade(parent, stops, rotation)
+	local keypoints = {}
+	for _, stop in ipairs(stops) do
+		table.insert(keypoints, NumberSequenceKeypoint.new(stop[1], stop[2]))
+	end
+	return New("UIGradient", {
+		Transparency = NumberSequence.new(keypoints),
+		Rotation = rotation or 90, Parent = parent,
+	})
 end
 
 local function Corner(radius, parent)
@@ -278,14 +302,40 @@ local function Heart(parent, size, zIndex)
 	Paint(body, "BackgroundColor3", "Accent")
 	table.insert(parts, body)
 
-	return {
+	-- a UIScale so the whole heart can beat without touching the lobes,
+	-- which are sized in offsets and would not follow the holder
+	local scale = New("UIScale", { Scale = 1, Parent = holder })
+
+	local heart
+	heart = {
 		Instance = holder,
+		Scale = scale,
 		SetColour = function(colour, info)
 			for _, part in ipairs(parts) do
 				Tween(part, { BackgroundColor3 = colour }, info or EASE_SNAP)
 			end
 		end,
+		SetTransparency = function(alpha)
+			for _, part in ipairs(parts) do part.BackgroundTransparency = alpha end
+		end,
+		-- two quick squeezes, like a heartbeat rather than a single pop
+		Beat = function(strength)
+			local peak = 1 + (strength or 0.18)
+			Tween(scale, { Scale = peak }, EASE_BEAT)
+			task.delay(0.16, function()
+				if not holder.Parent then return end
+				Tween(scale, { Scale = 1 }, EASE_BEAT)
+				task.delay(0.14, function()
+					if not holder.Parent then return end
+					Tween(scale, { Scale = 1 + (strength or 0.18) * 0.6 }, EASE_BEAT)
+					task.delay(0.14, function()
+						if holder.Parent then Tween(scale, { Scale = 1 }, EASE_OUT) end
+					end)
+				end)
+			end)
+		end,
 	}
+	return heart
 end
 
 -- A chevron from two bars, for the same reason the heart is drawn.
@@ -421,6 +471,7 @@ function Love.SetTheme(a, b)
 	SyncThemePickers(name)
 
 	for _, window in ipairs(Love.Windows) do
+		if window.Flash then window.Flash() end
 		if window.OnTheme then Fire(window.OnTheme, name) end
 	end
 	return true
@@ -443,17 +494,17 @@ end
 -- Toasts are deliberately small and few: they sit in the corner of a game
 -- you are trying to see past, so the stack is capped rather than allowed to
 -- climb the screen.
-local TOAST_WIDTH = 214
+local TOAST_WIDTH = 176
 Love.MaxToasts = 3
 
 local ToastStack = New("Frame", {
 	Name = "Stack", BackgroundTransparency = 1,
-	AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -14),
+	AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -12),
 	Size = UDim2.fromOffset(TOAST_WIDTH, 0), AutomaticSize = Enum.AutomaticSize.Y,
 	ZIndex = 501, Parent = ToastLayer,
 }, {
 	New("UIListLayout", {
-		Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder,
 		VerticalAlignment = Enum.VerticalAlignment.Bottom,
 		HorizontalAlignment = Enum.HorizontalAlignment.Right,
 	}),
@@ -468,7 +519,7 @@ function Love.Notify(a, b)
 	if typeof(cfg) == "string" then cfg = { Title = cfg } end
 	cfg = cfg or {}
 
-	local duration = tonumber(cfg.Duration) or 4
+	local duration = tonumber(cfg.Duration) or 3
 	toastOrder = toastOrder + 1
 
 	-- push the oldest out rather than letting the stack grow upwards
@@ -486,47 +537,90 @@ function Love.Notify(a, b)
 
 	local card = New("Frame", {
 		Name = "Toast", BackgroundTransparency = 1, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(20, 0), Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 502, Parent = slot,
+		Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, ClipsDescendants = true,
+		ZIndex = 502, Parent = slot,
 	})
-	Corner(8, card)
+	Corner(7, card)
 	Paint(card, "BackgroundColor3", "Panel")
 	local cardStroke = Stroke(card, "Line", 1)
-	Padding(card, 8, 9, 10, 10)
+
+	-- the card is not a flat rectangle: a wash of the accent runs across it
+	-- and a bar marks the left edge, so a toast reads as part of the library
+	local wash = New("Frame", {
+		Name = "Wash", BorderSizePixel = 0, BackgroundTransparency = 0.88,
+		Size = UDim2.fromScale(1, 1), ZIndex = 502, Parent = card,
+	})
+	Corner(7, wash)
+	Paint(wash, "BackgroundColor3", "Accent")
+	Fade(wash, { { 0, 0.35 }, { 0.75, 1 }, { 1, 1 } }, 0)
+
+	local edge = New("Frame", {
+		Name = "Edge", BorderSizePixel = 0, BackgroundTransparency = 1,
+		Size = UDim2.new(0, 2, 1, 0), ZIndex = 503, Parent = card,
+	})
+	Paint(edge, "BackgroundColor3", "Accent")
+
+	Padding(card, 6, 7, 9, 8)
 	List(card, 2)
 
-	local heart = Heart(card, 11, 503)
+	local heart = Heart(card, 9, 504)
 	heart.Instance.AnchorPoint = Vector2.new(0, 0)
 	heart.Instance.Position = UDim2.fromOffset(0, 1)
 	heart.Instance.LayoutOrder = 0
+	heart.SetTransparency(1)
 
 	local titleLabel = Text({
-		Parent = card, ZIndex = 503, Font = FONT_SB, TextSize = 12.5, LayoutOrder = 1,
+		Parent = card, ZIndex = 504, Font = FONT_SB, TextSize = 11.5, LayoutOrder = 1,
 		Text = tostring(cfg.Title or "LoveUI"), TextTransparency = 1,
-		TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 14),
+		TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 13),
 	})
 
 	local bodyLabel
 	if cfg.Content and cfg.Content ~= "" then
-		-- capped at four lines so one long message cannot fill the screen;
-		-- AutomaticSize would happily grow past the top of the display
-		local content = tostring(cfg.Content)
+		-- capped at two lines: a toast is a nudge, not a paragraph, and
+		-- AutomaticSize would happily grow past the top of the screen
 		bodyLabel = Text({
-			Parent = card, ZIndex = 503, Font = FONT, TextSize = 11.5, LayoutOrder = 2,
-			Token = "Sub", Text = content, TextWrapped = true,
+			Parent = card, ZIndex = 504, Font = FONT, TextSize = 10.5, LayoutOrder = 2,
+			Token = "Sub", Text = tostring(cfg.Content), TextWrapped = true,
 			TextYAlignment = Enum.TextYAlignment.Top, TextTransparency = 1,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 		})
 		New("UISizeConstraint", {
-			MaxSize = Vector2.new(TOAST_WIDTH, 58), Parent = bodyLabel,
+			MaxSize = Vector2.new(TOAST_WIDTH, 28), Parent = bodyLabel,
 		})
 	end
 
-	Tween(card, { BackgroundTransparency = 0, Position = UDim2.fromOffset(0, 0) }, EASE_SMOOTH)
-	Tween(cardStroke, { Transparency = 0 }, EASE_SMOOTH)
+	-- a hairline under the card that drains for however long it is up, so
+	-- the toast shows its own clock instead of vanishing out of nowhere
+	local timerLane, timerFill
+	if duration > 0 then
+		timerLane = New("Frame", {
+			Name = "Timer", BorderSizePixel = 0, BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, 0),
+			Size = UDim2.new(1, 0, 0, 2), ZIndex = 504, Parent = card,
+		})
+		timerFill = New("Frame", {
+			BorderSizePixel = 0, BackgroundTransparency = 0.35,
+			Size = UDim2.fromScale(1, 1), ZIndex = 504, Parent = timerLane,
+		})
+		Paint(timerFill, "BackgroundColor3", "Accent")
+	end
+
+	Tween(card, { BackgroundTransparency = 0.04, Position = UDim2.fromOffset(0, 0) }, EASE_SMOOTH)
+	Tween(cardStroke, { Transparency = 0.2 }, EASE_SMOOTH)
+	Tween(edge, { BackgroundTransparency = 0 }, EASE_SMOOTH)
 	Tween(titleLabel, { TextTransparency = 0 }, EASE_SMOOTH)
-	if bodyLabel then Tween(bodyLabel, { TextTransparency = 0 }, EASE_SMOOTH) end
+	if bodyLabel then Tween(bodyLabel, { TextTransparency = 0.05 }, EASE_SMOOTH) end
+	for _, part in ipairs(heart.Instance:GetChildren()) do
+		if part:IsA("Frame") then Tween(part, { BackgroundTransparency = 0 }, EASE_SMOOTH) end
+	end
+	heart.Beat(0.3)
+	if timerFill then
+		Tween(timerFill, { Size = UDim2.fromScale(0, 1) },
+			TweenInfo.new(duration, Enum.EasingStyle.Linear))
+	end
 
 	local closed = false
 	local function close()
@@ -535,16 +629,19 @@ function Love.Notify(a, b)
 		for i, fn in ipairs(liveToasts) do
 			if fn == close then table.remove(liveToasts, i); break end
 		end
-		Tween(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(20, 0) }, EASE_OUT)
+		Tween(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 0) }, EASE_OUT)
 		Tween(cardStroke, { Transparency = 1 }, EASE_OUT)
+		Tween(edge, { BackgroundTransparency = 1 }, EASE_OUT)
+		Tween(wash, { BackgroundTransparency = 1 }, EASE_OUT)
 		Tween(titleLabel, { TextTransparency = 1 }, EASE_OUT)
 		if bodyLabel then Tween(bodyLabel, { TextTransparency = 1 }, EASE_OUT) end
+		if timerFill then Tween(timerFill, { BackgroundTransparency = 1 }, EASE_OUT) end
 		task.delay(0.25, function() if slot then slot:Destroy() end end)
 	end
 
 	local hit = New("TextButton", {
 		BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-		Size = UDim2.fromScale(1, 1), ZIndex = 504, Parent = card,
+		Size = UDim2.fromScale(1, 1), ZIndex = 505, Parent = card,
 	})
 	hit.MouseButton1Click:Connect(close)
 
@@ -737,9 +834,13 @@ local function ElementAPI(holder, parent)
 		base.Row.MouseButton1Click:Connect(function()
 			Tween(base.Stroke, { Color = Theme.Accent, Transparency = 0 }, EASE_SNAP)
 			chevron.SetColour(Theme.Accent)
+			-- the chevron jumps forward and settles back, so a press that
+			-- runs something silent still looks like it did something
+			Tween(chevron.Instance, { Position = UDim2.new(1, 5, 0.5, 0) }, EASE_POP)
 			task.delay(0.18, function()
 				Tween(base.Stroke, { Color = Theme.Line, Transparency = 0.4 }, EASE_OUT)
 				chevron.SetColour(Theme.Muted)
+				Tween(chevron.Instance, { Position = UDim2.new(1, 0, 0.5, 0) }, EASE_SMOOTH)
 			end)
 			Fire(api.Callback, nil)
 		end)
@@ -785,10 +886,12 @@ local function ElementAPI(holder, parent)
 			local knobToken  = api.Value and "OnAccent" or "Muted"
 
 			Tween(track, { BackgroundColor3 = Theme[trackToken] }, info)
+			Tween(knob, { BackgroundColor3 = Theme[knobToken] }, info)
+			-- the knob overshoots a little, which is what makes a switch
+			-- feel like it has weight rather than teleporting
 			Tween(knob, {
-				BackgroundColor3 = Theme[knobToken],
 				Position = api.Value and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 3, 0.5, 0),
-			}, info)
+			}, animate and EASE_POP or info)
 
 			for _, entry in ipairs(Painted) do
 				if entry.Instance == track then entry.Token = trackToken end
@@ -1015,7 +1118,7 @@ local function ElementAPI(holder, parent)
 		-- no floating layer to get clipped or left behind
 		local listHolder = New("Frame", {
 			Name = "Options", BackgroundTransparency = 1, Visible = false,
-			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0), ClipsDescendants = true,
 			ZIndex = 7, Parent = box,
 		})
 		List(listHolder, 4)
@@ -1026,6 +1129,14 @@ local function ElementAPI(holder, parent)
 			Open = false, Callback = cfg.Callback,
 		}
 		local buttons = {}
+
+		-- the list grows to a height we can work out, rather than snapping
+		-- to whatever AutomaticSize decides: rows are 30 tall with a 4 gap
+		local function listHeight()
+			local count = #api.Values
+			if count == 0 then return 0 end
+			return count * 30 + (count - 1) * 4
+		end
 
 		local function chosen(value)
 			if not multi then return api.Value == value end
@@ -1118,8 +1229,31 @@ local function ElementAPI(holder, parent)
 			local open = state
 			if a ~= api then open = a end
 			api.Open = open and true or false
-			listHolder.Visible = api.Open
-			Tween(arrow.Instance, { Rotation = api.Open and 180 or 0 }, EASE_OUT)
+
+			if api.Open then
+				listHolder.Visible = true
+				Tween(listHolder, { Size = UDim2.new(1, 0, 0, listHeight()) }, EASE_EXPAND)
+				-- rows arrive one after another, which reads as a list
+				-- unrolling rather than a block appearing
+				local index = 0
+				for _, entry in pairs(buttons) do
+					index = index + 1
+					entry.Button.BackgroundTransparency = 1
+					entry.Label.TextTransparency = 1
+					task.delay(index * 0.025, function()
+						if not api.Open or not entry.Button.Parent then return end
+						Tween(entry.Button, { BackgroundTransparency = 0 }, EASE_OUT)
+						Tween(entry.Label, { TextTransparency = 0 }, EASE_OUT)
+					end)
+				end
+			else
+				Tween(listHolder, { Size = UDim2.new(1, 0, 0, 0) }, EASE_EXPAND)
+				task.delay(0.24, function()
+					if not api.Open and listHolder.Parent then listHolder.Visible = false end
+				end)
+			end
+
+			Tween(arrow.Instance, { Rotation = api.Open and 180 or 0 }, EASE_EXPAND)
 			arrow.SetColour(api.Open and Theme.Accent or Theme.Muted)
 			return api.Open
 		end
@@ -1177,6 +1311,9 @@ local function ElementAPI(holder, parent)
 
 			build()
 			renderValue()
+			if api.Open then
+				listHolder.Size = UDim2.new(1, 0, 0, listHeight())
+			end
 			return api
 		end
 		api.Refresh = api.SetValues
@@ -1504,10 +1641,11 @@ local function ElementAPI(holder, parent)
 
 		local body = New("Frame", {
 			Name = "Bars", BackgroundTransparency = 1, Visible = false,
-			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0), ClipsDescendants = true,
 			ZIndex = 7, Parent = box,
 		})
 		List(body, 6)
+		local BARS_HEIGHT = 3 * 18 + 2 * 6
 
 		local api = {
 			Instance = box, Type = "ColorPicker", Value = start,
@@ -1608,8 +1746,18 @@ local function ElementAPI(holder, parent)
 			local open = state
 			if a ~= api then open = a end
 			api.Open = open and true or false
-			body.Visible = api.Open
-			Tween(arrow.Instance, { Rotation = api.Open and 180 or 0 }, EASE_OUT)
+
+			if api.Open then
+				body.Visible = true
+				Tween(body, { Size = UDim2.new(1, 0, 0, BARS_HEIGHT) }, EASE_EXPAND)
+			else
+				Tween(body, { Size = UDim2.new(1, 0, 0, 0) }, EASE_EXPAND)
+				task.delay(0.24, function()
+					if not api.Open and body.Parent then body.Visible = false end
+				end)
+			end
+
+			Tween(arrow.Instance, { Rotation = api.Open and 180 or 0 }, EASE_EXPAND)
 			arrow.SetColour(api.Open and Theme.Accent or Theme.Muted)
 			return api.Open
 		end
@@ -1865,16 +2013,24 @@ function Love.CreateWindow(a, b)
 
 	if cfg.Theme and Themes[cfg.Theme] then Love.SetTheme(Love, cfg.Theme) end
 
-	local width      = tonumber(cfg.Width) or 340
+	-- the sidebar is short and narrow by default and grows sideways: the
+	-- panel widens rather than getting taller, because a tall column in a
+	-- game you are trying to see past is worse than a wide short one
+	local baseWidth  = tonumber(cfg.Width) or 300
+	local maxWidth   = tonumber(cfg.MaxWidth) or 620
 	local handleW    = tonumber(cfg.HandleWidth) or 8
-	local handleH    = tonumber(cfg.HandleHeight) or 150
+	local handleH    = tonumber(cfg.HandleHeight) or 132
 	local threshold  = tonumber(cfg.Threshold) or 60
 	local toggleKey  = cfg.Keybind or Enum.KeyCode.RightShift
+	if maxWidth < baseWidth then maxWidth = baseWidth end
+
+	local width = baseWidth
 
 	local Window = {
 		Tabs = {}, ActiveTab = nil, Open = cfg.StartOpen == true,
 		ToggleKey = toggleKey, Title = tostring(cfg.Title or "LoveUI"),
-		OnTheme = cfg.OnTheme,
+		OnTheme = cfg.OnTheme, Width = baseWidth, BaseWidth = baseWidth,
+		MaxWidth = maxWidth,
 	}
 
 	----------------------------------------------------------------
@@ -1884,18 +2040,10 @@ function Love.CreateWindow(a, b)
 	local drawer = New("Frame", {
 		Name = "Drawer", BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -width, 0.5, 0),
-		Size = UDim2.new(0, width + handleW, tonumber(cfg.Height) or 0.92, 0),
+		Size = UDim2.new(0, width + handleW, tonumber(cfg.Height) or 0.74, 0),
 		ZIndex = 10, Parent = Root,
 	})
 	Window.Instance = drawer
-
-	-- one knob for "everything is too small": UIScale multiplies the panel
-	-- and everything in it. Touch devices start a little larger, since the
-	-- same pixel is a smaller share of a phone screen and a fatter target.
-	local touchOnly = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	local scaleValue = tonumber(cfg.Scale) or (touchOnly and 1.15 or 1)
-	local uiScale = New("UIScale", { Scale = scaleValue, Parent = drawer })
-	Window.Scale = scaleValue
 
 	local panel = New("Frame", {
 		Name = "Panel", BorderSizePixel = 0, Size = UDim2.new(0, width, 1, 0),
@@ -1903,7 +2051,60 @@ function Love.CreateWindow(a, b)
 	})
 	Corner(12, panel)
 	Paint(panel, "BackgroundColor3", "Bg")
-	Stroke(panel, "Line", 0.25)
+	local panelStroke = Stroke(panel, "Line", 0.25)
+	Window.PanelStroke = panelStroke
+
+	----------------------------------------------------------------
+	-- backdrop: the panel is not a flat slab. A wash of the accent runs
+	-- down it, two soft glows sit in opposite corners, and a few hearts
+	-- drift behind the content at the edge of visible. All of it is drawn
+	-- from frames and gradients, so there are no image assets to fail to
+	-- load, and all of it is painted with theme tokens, so it follows a
+	-- theme switch like everything else.
+	----------------------------------------------------------------
+	local style = tostring(cfg.Background or "hearts"):lower()
+
+	local backdrop = New("Frame", {
+		Name = "Backdrop", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+		ClipsDescendants = true, ZIndex = 10, Parent = panel,
+	})
+
+	if style ~= "plain" then
+		local wash = New("Frame", {
+			Name = "Wash", BorderSizePixel = 0, BackgroundTransparency = 0.9,
+			Size = UDim2.fromScale(1, 1), ZIndex = 10, Parent = backdrop,
+		})
+		Paint(wash, "BackgroundColor3", "Accent")
+		Fade(wash, { { 0, 0.55 }, { 0.55, 0.9 }, { 1, 0.35 } })
+
+		for index, spot in ipairs({
+			{ UDim2.fromScale(1, 0), Vector2.new(1, 0), 230 },
+			{ UDim2.fromScale(0, 1), Vector2.new(0, 1), 280 },
+		}) do
+			local glow = New("Frame", {
+				Name = "Glow" .. index, BorderSizePixel = 0, BackgroundTransparency = 0.82,
+				AnchorPoint = spot[2], Position = spot[1],
+				Size = UDim2.fromOffset(spot[3], spot[3]), ZIndex = 10, Parent = backdrop,
+			})
+			Corner(math.floor(spot[3] / 2), glow)
+			Paint(glow, "BackgroundColor3", "Accent")
+			Fade(glow, { { 0, 0.55 }, { 1, 1 } }, index == 1 and 135 or -45)
+		end
+
+		if style ~= "glow" then
+			for _, mark in ipairs({
+				{ 0.82, 0.18, 54, 14 },
+				{ 0.16, 0.44, 30, -18 },
+				{ 0.66, 0.72, 74, 8 },
+				{ 0.28, 0.92, 22, -12 },
+			}) do
+				local heart = Heart(backdrop, mark[3], 10)
+				heart.Instance.Position = UDim2.fromScale(mark[1], mark[2])
+				heart.Instance.Rotation = mark[4]
+				heart.SetTransparency(0.94)
+			end
+		end
+	end
 
 	local handle = New("TextButton", {
 		Name = "Handle", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
@@ -1913,6 +2114,7 @@ function Love.CreateWindow(a, b)
 	})
 	Corner(4, handle)
 	Paint(handle, "BackgroundColor3", "Accent")
+	Fade(handle, { { 0, 0.35 }, { 0.5, 0 }, { 1, 0.35 } })
 
 	----------------------------------------------------------------
 	-- header
@@ -1923,7 +2125,19 @@ function Love.CreateWindow(a, b)
 	})
 	Padding(header, 0, 0, 16, 14)
 
-	Heart(header, 18, 12).Instance.Position = UDim2.new(0, 9, 0.5, -1)
+	local headerHeart = Heart(header, 18, 12)
+	headerHeart.Instance.Position = UDim2.new(0, 9, 0.5, -1)
+
+	-- the heart beats every few seconds, the way an idle cursor blinks: it
+	-- is the only thing on screen that moves on its own, and it is the
+	-- library telling you it is still running
+	task.spawn(function()
+		while not Love.Unloaded and header.Parent do
+			task.wait(6)
+			if Love.Unloaded or not header.Parent then break end
+			if Window.Open then headerHeart.Beat(0.12) end
+		end
+	end)
 
 	local titleLabel = Text({
 		Name = "Title", Parent = header, ZIndex = 12, Font = FONT_B, TextSize = 15.5,
@@ -1939,6 +2153,25 @@ function Love.CreateWindow(a, b)
 	-- the theme control: a swatch that drops a list of every palette. It
 	-- used to cycle blind on each click, which told you nothing about what
 	-- was coming next. Picking here moves any Theme dropdown on a page too.
+	local wideBtn = New("TextButton", {
+		Name = "Widen", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -32, 0.5, 0),
+		Size = UDim2.fromOffset(28, 28), ZIndex = 12, Parent = header,
+	})
+	Corner(14, wideBtn)
+	Paint(wideBtn, "BackgroundColor3", "Card")
+
+	-- two chevrons back to back: pointing out when there is room to grow,
+	-- pointing in when the panel is already wide
+	local wideLeft = Chevron({
+		Parent = wideBtn, ZIndex = 13, Size = 10, Rotation = 90,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.32, 0.5),
+	})
+	local wideRight = Chevron({
+		Parent = wideBtn, ZIndex = 13, Size = 10, Rotation = -90,
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.68, 0.5),
+	})
+
 	local themeBtn = New("TextButton", {
 		Name = "Theme", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
 		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
@@ -2014,6 +2247,20 @@ function Love.CreateWindow(a, b)
 
 	RegisterThemePicker({ Instance = themeMenu, Show = paintThemeRows })
 
+	-- switching palettes is worth watching: the heart beats, the panel edge
+	-- catches the new accent, and the swatch pops
+	function Window.Flash()
+		if not panel.Parent then return end
+		headerHeart.Beat(0.26)
+		Tween(themeDot, { Size = UDim2.fromOffset(17, 17) }, EASE_POP)
+		Tween(panelStroke, { Color = Theme.Accent, Transparency = 0.1 }, EASE_OUT)
+		task.delay(0.28, function()
+			if not panel.Parent then return end
+			Tween(themeDot, { Size = UDim2.fromOffset(13, 13) }, EASE_SMOOTH)
+			Tween(panelStroke, { Color = Theme.Line, Transparency = 0.25 }, EASE_SMOOTH)
+		end)
+	end
+
 	themeBtn.MouseButton1Click:Connect(function()
 		themeMenu.Visible = not themeMenu.Visible
 	end)
@@ -2047,33 +2294,81 @@ function Love.CreateWindow(a, b)
 	----------------------------------------------------------------
 	-- open / close, by gesture or by key
 	----------------------------------------------------------------
-	-- the panel is `width` wide before UIScale, so how far it has to travel
-	-- to be off-screen depends on the scale in force
 	local function offsetFor(open)
 		if open then return 0 end
-		return -math.floor(width * scaleValue + 0.5)
+		return -width
+	end
+
+	-- widening is a first-class move, not a setting: the panel keeps its
+	-- height and grows to the right, and the handle rides along with it
+	-- `holdPosition` is for mid-drag calls: a shut sidebar normally parks
+	-- itself off-screen when it changes width, which would fight the finger
+	-- that is dragging it open
+	local function applyWidth(value, animate, holdPosition)
+		width = math.floor(Clamp(value, baseWidth, maxWidth) + 0.5)
+		Window.Width = width
+
+		local info = animate and EASE_EXPAND or TweenInfo.new(0)
+		Tween(drawer, { Size = UDim2.new(0, width + handleW, drawer.Size.Y.Scale, drawer.Size.Y.Offset) }, info)
+		Tween(panel, { Size = UDim2.new(0, width, 1, 0) }, info)
+		Tween(handle, { Position = UDim2.new(0, width + 4, 0.5, 0) }, info)
+		if not Window.Open and not holdPosition then
+			Tween(drawer, { Position = UDim2.new(0, offsetFor(false), 0.5, 0) }, info)
+		end
+		return width
+	end
+
+	function Window.SetWidth(p1, p2)
+		local value = p2
+		if p1 ~= Window then value = p1 end
+		return applyWidth(tonumber(value) or baseWidth, true)
+	end
+	function Window.Expand() return Window.SetWidth(Window, maxWidth) end
+	function Window.Collapse() return Window.SetWidth(Window, baseWidth) end
+	function Window.ToggleWidth()
+		if width > baseWidth + 4 then return Window.Collapse() end
+		return Window.Expand()
 	end
 
 	function Window.SetOpen(p1, p2)
 		local open = p2
 		if p1 ~= Window then open = p1 end
+		local was = Window.Open
 		Window.Open = open and true or false
 
 		themeMenu.Visible = false
-		Tween(drawer, { Position = UDim2.new(0, offsetFor(Window.Open), 0.5, 0) }, EASE_SMOOTH)
-		Tween(handle, { BackgroundTransparency = Window.Open and 0.7 or 0.45 }, EASE_OUT)
+		Tween(drawer, { Position = UDim2.new(0, offsetFor(Window.Open), 0.5, 0) }, EASE_DRAWER)
+		Tween(handle, {
+			BackgroundTransparency = Window.Open and 0.7 or 0.4,
+			Size = UDim2.fromOffset(handleW, Window.Open and handleH * 0.7 or handleH),
+		}, EASE_EXPAND)
+
+		-- opening is worth a little flourish: the heart beats and the panel
+		-- edge catches the accent for a moment
+		if Window.Open and not was then
+			headerHeart.Beat(0.24)
+			Tween(panelStroke, { Color = Theme.Accent, Transparency = 0 }, EASE_OUT)
+			task.delay(0.45, function()
+				if panel.Parent then
+					Tween(panelStroke, { Color = Theme.Line, Transparency = 0.25 }, EASE_SMOOTH)
+				end
+			end)
+		end
 		return Window.Open
 	end
 	function Window.Toggle() return Window.SetOpen(Window, not Window.Open) end
 	Window.SetVisible = Window.SetOpen
 
-	local dragging, startX, startOffset, moved = false, 0, 0, false
+	local dragging, startX, startOffset, startWidth, startOpen, moved = false, 0, 0, 0, false, false
 
 	handle.InputBegan:Connect(function(input)
 		if not IsClick(input) then return end
 		dragging, moved = true, false
 		startX = input.Position.X
 		startOffset = drawer.Position.X.Offset
+		startWidth = width
+		startOpen = Window.Open
+		Tween(handle, { BackgroundTransparency = 0.1 }, EASE_SNAP)
 	end)
 
 	Love:Connect(UserInputService.InputChanged, function(input)
@@ -2083,12 +2378,33 @@ function Love.CreateWindow(a, b)
 
 		local dx = input.Position.X - startX
 		if math.abs(dx) > 5 then moved = true end
-		drawer.Position = UDim2.new(0, Clamp(startOffset + dx, offsetFor(false), 0), 0.5, 0)
+
+		if startOpen then
+			-- already open: pulling right widens it, pulling left slides it out
+			local wanted = startWidth + dx
+			if wanted >= baseWidth then
+				applyWidth(wanted, false, true)
+				drawer.Position = UDim2.new(0, 0, 0.5, 0)
+			else
+				applyWidth(baseWidth, false, true)
+				drawer.Position = UDim2.new(0, Clamp(wanted - baseWidth, -baseWidth, 0), 0.5, 0)
+			end
+		else
+			-- sliding in, and carrying on past flush keeps widening it
+			local travel = startOffset + dx
+			if travel <= 0 then
+				drawer.Position = UDim2.new(0, Clamp(travel, offsetFor(false), 0), 0.5, 0)
+			else
+				applyWidth(startWidth + travel, false, true)
+				drawer.Position = UDim2.new(0, 0, 0.5, 0)
+			end
+		end
 	end)
 
 	Love:Connect(UserInputService.InputEnded, function(input)
 		if not dragging or not IsClick(input) then return end
 		dragging = false
+		Tween(handle, { BackgroundTransparency = Window.Open and 0.7 or 0.4 }, EASE_OUT)
 
 		-- a tap toggles; a drag commits to whichever side it got closest to
 		if not moved then
@@ -2102,11 +2418,44 @@ function Love.CreateWindow(a, b)
 		else
 			Window.SetOpen(Window, Window.Open)
 		end
+		-- snap a nearly-unwidened panel back, so it cannot end up 3px wide
+		if width > baseWidth and width - baseWidth < 24 then applyWidth(baseWidth, true) end
+	end)
+
+	-- while the sidebar is shut the handle breathes, slowly, so a strip of
+	-- pink at the edge of the screen reads as something you can grab
+	task.spawn(function()
+		while not Love.Unloaded and handle.Parent do
+			task.wait(2.2)
+			if Love.Unloaded or not handle.Parent then break end
+			if not Window.Open and not dragging then
+				Tween(handle, { BackgroundTransparency = 0.15 },
+					TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut))
+				task.delay(0.9, function()
+					if handle.Parent and not Window.Open and not dragging then
+						Tween(handle, { BackgroundTransparency = 0.4 },
+							TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut))
+					end
+				end)
+			end
+		end
 	end)
 
 	Love:Connect(UserInputService.InputBegan, function(input, processed)
 		if processed then return end
 		if Window.ToggleKey and input.KeyCode == Window.ToggleKey then Window.Toggle() end
+	end)
+
+	-- the widen control lives in the header but needs the width helpers,
+	-- which are declared below it
+	wideBtn.MouseButton1Click:Connect(function()
+		local wide = width > baseWidth + 4
+		Window.ToggleWidth()
+		local colour = wide and Theme.Muted or Theme.Accent
+		wideLeft.SetColour(colour)
+		wideRight.SetColour(colour)
+		Tween(wideLeft.Instance, { Position = UDim2.fromScale(wide and 0.38 or 0.26, 0.5) }, EASE_POP)
+		Tween(wideRight.Instance, { Position = UDim2.fromScale(wide and 0.62 or 0.74, 0.5) }, EASE_POP)
 	end)
 
 	function Window.SetTitle(p1, p2)
@@ -2115,16 +2464,6 @@ function Love.CreateWindow(a, b)
 		Window.Title = tostring(title)
 		titleLabel.Text = Window.Title
 		return Window.Title
-	end
-
-	function Window.SetScale(p1, p2)
-		local value = p2
-		if p1 ~= Window then value = p1 end
-		scaleValue = Clamp(tonumber(value) or 1, 0.7, 2)
-		uiScale.Scale = scaleValue
-		Window.Scale = scaleValue
-		Window.SetOpen(Window, Window.Open)
-		return scaleValue
 	end
 
 	function Window.SetToggleKey(p1, p2)
@@ -2170,17 +2509,24 @@ function Love.CreateWindow(a, b)
 			AutomaticSize = Enum.AutomaticSize.X,
 		})
 
+		-- each page lives in a CanvasGroup so the whole thing can fade as one
+		-- piece; fading forty labels individually looks like a glitch
+		local wrap = New("CanvasGroup", {
+			Name = name, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+			GroupTransparency = 1, Visible = false, ZIndex = 11, Parent = content,
+		})
+
 		local page = New("ScrollingFrame", {
-			Name = name, BackgroundTransparency = 1, BorderSizePixel = 0,
-			Size = UDim2.fromScale(1, 1), Visible = false, CanvasSize = UDim2.new(),
+			Name = "Page", BackgroundTransparency = 1, BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
 			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
-			ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 11, Parent = content,
+			ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 11, Parent = wrap,
 		})
 		Paint(page, "ScrollBarImageColor3", "Line")
 		Padding(page, 14, 18, 14, 12)
 		List(page, 9)
 
-		Tab.Instance, Tab.Page, Tab.Container = pill, page, page
+		Tab.Instance, Tab.Page, Tab.Container, Tab.Wrap = pill, page, page, wrap
 
 		local function paintPill(active)
 			Tween(pill, { BackgroundColor3 = active and Theme.Accent or Theme.Card }, EASE_SNAP)
@@ -2194,18 +2540,45 @@ function Love.CreateWindow(a, b)
 		function Tab.Select()
 			themeMenu.Visible = false
 			if Window.ActiveTab == Tab then return end
-			if Window.ActiveTab then
-				Window.ActiveTab.Page.Visible = false
-				Window.ActiveTab.Paint(false)
+
+			-- the outgoing page slides out the way it came in, the incoming
+			-- one slides in from the other side: the movement says which
+			-- direction you went, even when the pages look alike
+			local leaving = Window.ActiveTab
+			if leaving then
+				leaving.Paint(false)
+				local old = leaving.Wrap
+				Tween(old, {
+					GroupTransparency = 1, Position = UDim2.fromOffset(-18, 0),
+				}, EASE_OUT)
+				task.delay(0.22, function()
+					if Window.ActiveTab ~= leaving and old.Parent then
+						old.Visible = false
+						leaving.Page.Visible = false
+					end
+				end)
 			end
+
 			Window.ActiveTab = Tab
 			page.Visible = true
 			page.CanvasPosition = Vector2.new(0, 0)
+			wrap.Visible = true
+			wrap.Position = UDim2.fromOffset(22, 0)
+			wrap.GroupTransparency = 1
+			Tween(wrap, {
+				GroupTransparency = 0, Position = UDim2.fromOffset(0, 0),
+			}, EASE_SMOOTH)
 			paintPill(true)
 		end
 		Tab.Paint = paintPill
 
-		pill.MouseButton1Click:Connect(Tab.Select)
+		pill.MouseButton1Click:Connect(function()
+			Tab.Select()
+			Tween(pillLabel, { TextTransparency = 0.45 }, EASE_BEAT)
+			task.delay(0.1, function()
+				if pillLabel.Parent then Tween(pillLabel, { TextTransparency = 0 }, EASE_OUT) end
+			end)
+		end)
 		paintPill(false)
 
 		ElementAPI(Tab, page)

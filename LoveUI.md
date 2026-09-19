@@ -34,6 +34,9 @@ panel's right edge, moving with it, so the same handle opens it and closes it.
 
 - **Drag the handle right** to open, **left** to close. Past the threshold it
   commits; short of it, it snaps back.
+- **Keep dragging right** once it is open and the panel **widens**. It grows
+  sideways, never taller, so it never becomes a column down the middle of the
+  screen. Drag back left to narrow it, then further to close it.
 - **Tap the handle** to toggle without dragging.
 - **Press the keybind** (Right Shift by default).
 
@@ -110,11 +113,12 @@ local Window = Love:CreateWindow({
     Title        = "My Script",
     SubTitle     = "v1.0",
     Theme        = "Rose",
-    Width        = 340,                       -- how far it slides in
-    Height       = 0.92,                      -- fraction of the screen
-    Scale        = 1,                         -- multiplies the whole panel
+    Background   = "hearts",                  -- hearts · glow · plain
+    Width        = 300,                       -- how far it slides in
+    MaxWidth     = 620,                       -- how far it can be widened
+    Height       = 0.74,                      -- fraction of the screen
     HandleWidth  = 8,
-    HandleHeight = 150,
+    HandleHeight = 132,
     Threshold    = 60,                        -- drag distance that commits
     Keybind      = Enum.KeyCode.RightShift,
     StartOpen    = false,
@@ -127,26 +131,43 @@ local Window = Love:CreateWindow({
 | `Window:SetOpen(bool)` | slide in or out |
 | `Window:Toggle()` | flip it |
 | `Window:SetTitle(text)` | rename the header |
-| `Window:SetScale(n)` | resize the whole panel, 0.7–2 |
+| `Window:SetWidth(n)` | widen or narrow, clamped to Width…MaxWidth |
+| `Window:Expand()` / `Window:Collapse()` | jump to MaxWidth or back |
+| `Window:ToggleWidth()` | what the header chevrons do |
 | `Window:SetToggleKey(keycode)` | rebind |
 | `Window:Notify(cfg)` | same as `Love:Notify` |
 | `Window:Destroy()` | remove this window only |
 
-`Window.Open`, `Window.Tabs`, `Window.ActiveTab`, `Window.Scale` and
+`Window.Open`, `Window.Tabs`, `Window.ActiveTab`, `Window.Width` and
 `Window.Instance` (the drawer frame) are readable.
 
-### If it is too small
+### Room for more
 
-`Scale` multiplies the panel and everything in it, so one number fixes the
-whole interface rather than a config key per element:
+The panel starts narrow and short. When you need more room it goes **wider**,
+not taller — drag the handle right past flush, press the chevrons in the
+header, or call it:
 
 ```lua
-Love:CreateWindow({ Title = "My Script", Scale = 1.25 })
-Window:SetScale(1.4)        -- or at runtime
+Window:SetWidth(480)
+Window:ToggleWidth()        -- base width ↔ MaxWidth
 ```
 
-Touch devices without a keyboard start at `1.15`, since the same pixel is a
-smaller share of a phone screen and a fatter target.
+A widened panel still hides completely, and a drag that only widens it by a
+few pixels snaps back rather than leaving a ragged edge.
+
+### Backdrop
+
+The panel is not a flat fill. A wash of the accent runs down it, two soft
+glows sit in opposite corners, and a few hearts drift behind the content at
+the edge of visible. All of it is drawn from frames and gradients — no image
+assets to fail to load — and all of it is painted with theme tokens, so it
+follows a theme switch like everything else.
+
+```lua
+Love:CreateWindow({ Background = "hearts" })   -- default
+Love:CreateWindow({ Background = "glow" })     -- wash and glows, no hearts
+Love:CreateWindow({ Background = "plain" })    -- flat, as it was
+```
 
 ---
 
@@ -399,9 +420,30 @@ Love:Notify("short form")
 Toasts stack in the bottom-right corner, slide in, and remove themselves when
 their duration is up.
 
-They are deliberately small: the stack caps at three, pushing the oldest out
-rather than climbing the screen, and a long message is height-capped instead
-of growing without limit. Change the cap with `Love.MaxToasts = 5`.
+They are deliberately small — 176px wide, two lines of body text at most, and
+the stack caps at three, pushing the oldest out rather than climbing the
+screen. Change the cap with `Love.MaxToasts = 5`.
+
+Each one carries the accent: a wash across the card, a bar down the left edge,
+a beating heart, and a hairline underneath that drains for however long the
+toast is up, so it shows its own clock instead of vanishing out of nowhere.
+
+---
+
+## Movement
+
+Nothing in the library just appears. The pieces that move, and why:
+
+| What | Does |
+| --- | --- |
+| The sidebar | slides on a long quintic curve; the panel edge catches the accent as it lands |
+| The heart | beats when the sidebar opens, when the theme changes, and once in a while on its own |
+| The handle | breathes slowly while the sidebar is shut, so a strip of pink at the screen edge reads as something you can grab |
+| Tab pages | cross-fade and slide — the outgoing page leaves the way it came in, the incoming one arrives from the other side |
+| Dropdowns | expand to a measured height, rows fading in one after another rather than a block appearing |
+| Toggles | overshoot slightly, so the switch has some weight |
+| Buttons | the chevron jumps forward and settles back, so a press that runs something silent still looks like it did something |
+| Toasts | slide in from the right, drain their timer line, and slide back out |
 
 ---
 
