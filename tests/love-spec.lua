@@ -20,7 +20,7 @@ end
 --------------------------------------------------------------------
 local Window = Love:CreateWindow({
 	Title = "Love Demo", SubTitle = "v1", Theme = "Rose",
-	Width = 290, Keybind = Enum.KeyCode.RightShift,
+	Width = 340, Keybind = Enum.KeyCode.RightShift,
 })
 assert(Window and Window.Instance, "no drawer")
 
@@ -28,8 +28,8 @@ local drawer = Window.Instance
 local panel = drawer:FindFirstChild("Panel")
 local handle = drawer:FindFirstChild("Handle")
 assert(panel and handle, "drawer is missing its panel or handle")
-assert(drawer.Position.X.Offset == -290, "sidebar should start off-screen")
-assert(handle.Position.X.Offset > 290 - 1, "handle must ride the panel's right edge")
+assert(drawer.Position.X.Offset == -340, "sidebar should start off-screen")
+assert(handle.Position.X.Offset > 340 - 1, "handle must ride the panel's right edge")
 assert(handle.BackgroundTransparency > 0, "handle must be translucent")
 
 --------------------------------------------------------------------
@@ -164,12 +164,24 @@ handle.InputBegan:Fire(press(200))
 MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(900, 0, 0) })
 assert(drawer.Position.X.Offset == 0, "drawer must clamp at the open edge")
 MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(-900, 0, 0) })
-assert(drawer.Position.X.Offset == -290, "drawer must clamp at the closed edge")
+assert(drawer.Position.X.Offset == -340, "drawer must clamp at the closed edge")
 MOCK.UIS.InputEnded:Fire(press(-900))
 assert(Window.Open == false, "dragging fully left should close it")
 
 Window:SetOpen(true)
 assert(Window.Open == true, "SetOpen failed")
+
+-- scale: the drawer has to travel further to hide when it is bigger
+assert(Window.Scale == 1, "scale should default to 1 on a keyboard device")
+Window:SetScale(1.2)
+assert(Window.Scale == 1.2, "SetScale did not take")
+assert(drawer:FindFirstChildOfClass("UIScale").Scale == 1.2, "UIScale not applied")
+Window:SetOpen(false)
+assert(drawer.Position.X.Offset == -408, "a scaled sidebar must still hide fully")
+Window:SetOpen(true)
+Window:SetScale(5)
+assert(Window.Scale == 2, "scale must clamp")
+Window:SetScale(1)
 
 Window:SetTitle("Renamed")
 assert(panel:FindFirstChild("Header"):FindFirstChild("Title").Text == "Renamed",
@@ -223,6 +235,190 @@ MOCK.step(3)
 
 Window:Notify("string form")
 MOCK.step(6)
+
+--------------------------------------------------------------------
+-- theme pickers stay in step with each other
+--------------------------------------------------------------------
+do
+	local Looks = Window:CreateTab("Looks")
+	local Palette = Looks:CreateSection("Palette")
+	local themeDrop = Palette:ThemeDropdown({ Title = "Theme" })
+	assert(themeDrop:Get() == Love.ThemeName, "theme dropdown started out of step")
+
+	Love:SetTheme("Wine")
+	assert(themeDrop:Get() == "Wine", "SetTheme did not move the theme dropdown")
+
+	local menu = panel:FindFirstChild("ThemeMenu")
+	assert(menu, "the header has no theme menu")
+	assert(menu.Visible == false, "the theme menu should start closed")
+
+	local swatch = panel:FindFirstChild("Header"):FindFirstChild("Theme")
+	swatch.MouseButton1Click:Fire()
+	assert(menu.Visible == true, "the swatch did not open the theme menu")
+
+	menu:FindFirstChild("Sakura").MouseButton1Click:Fire()
+	assert(Love.ThemeName == "Sakura", "the header picker did not set the theme")
+	assert(menu.Visible == false, "picking a theme should close the menu")
+	assert(themeDrop:Get() == "Sakura", "the header picker did not move the dropdown")
+
+	-- and the other direction
+	themeDrop:Set("Rose")
+	assert(Love.ThemeName == "Rose", "the dropdown did not set the theme")
+
+	-- navigating away closes the menu
+	swatch.MouseButton1Click:Fire()
+	assert(menu.Visible == true, "the swatch should toggle the menu open again")
+	Main:Select()
+	assert(menu.Visible == false, "switching tabs should close the theme menu")
+	Looks:Select()
+
+	local late = Palette:ThemeDropdown("Theme again")
+	assert(late:Get() == "Rose", "a picker built later started out of step")
+	Love:NextTheme()
+	assert(late:Get() == Love.ThemeName, "NextTheme did not reach the pickers")
+	Love:SetTheme("Rose")
+	Main:Select()
+end
+
+--------------------------------------------------------------------
+-- notifications stay small and few
+--------------------------------------------------------------------
+do
+	local function liveSlots()
+		local n = 0
+		for _, inst in ipairs(MOCK.allInstances) do
+			if inst.Name == "Slot" and inst.Parent and inst.Parent.Name == "Stack" then
+				n = n + 1
+			end
+		end
+		return n
+	end
+
+	local stack = find(function(i) return i.Name == "Stack" end)
+	assert(stack.Size.X.Offset <= 240, "the toast stack is too wide")
+
+	-- the cap is the thing being tested, so prove the count tracks it
+	Love.MaxToasts = 5
+	for i = 1, 6 do Love:Notify({ Title = "A" .. i, Duration = 0 }) end
+	MOCK.step(0.6)
+	assert(liveSlots() == 5, "expected 5 toasts, got " .. liveSlots())
+
+	Love.MaxToasts = 3
+	for i = 1, 6 do Love:Notify({ Title = "T" .. i, Duration = 0 }) end
+	MOCK.step(0.6)
+	assert(liveSlots() == 3, "expected the stack to cap at 3, got " .. liveSlots())
+
+	-- a long message is height-capped rather than allowed to climb
+	Love:Notify({ Title = "Long", Content = string.rep("word ", 120), Duration = 0 })
+	MOCK.step(0.6)
+	local body
+	for _, inst in ipairs(MOCK.allInstances) do
+		if inst.ClassName == "TextLabel" and inst.Parent and inst.Parent.Name == "Toast"
+			and string.find(inst.Text, "word", 1, true) then body = inst end
+	end
+	assert(body, "long toast body missing")
+	local cap = body:FindFirstChildOfClass("UISizeConstraint")
+	assert(cap and cap.MaxSize.Y <= 60, "toast body is not height-capped")
+
+	for _, inst in ipairs(MOCK.allInstances) do
+		if inst.Name == "Slot" and inst.Parent and inst.Parent.Name == "Stack" then
+			inst:Destroy()
+		end
+	end
+end
+
+--------------------------------------------------------------------
+-- the elements added in 1.1
+--------------------------------------------------------------------
+do
+	local More = Window:CreateTab("More")
+	local Bits = More:CreateSection("Bits")
+
+	-- multi-select dropdown
+	local picked
+	local multi = Bits:Dropdown({
+		Title = "Parts", Values = { "A", "B", "C" }, Multi = true, Flag = "parts",
+		Callback = function(list) picked = list end,
+	})
+	assert(typeof(multi:Get()) == "table", "a multi dropdown holds a list")
+	multi:Select("A")
+	multi:Select("B")
+	assert(#multi:Get() == 2, "multi select did not accumulate")
+	assert(picked and #picked == 2, "multi callback did not carry the list")
+	multi:Select("A")
+	assert(#multi:Get() == 1 and multi:Get()[1] == "B", "picking again should unpick")
+	multi:Set({ "A", "C" })
+	assert(#multi:Get() == 2, "Set did not replace the selection")
+	multi:SetValues({ "C" })
+	assert(#multi:Get() == 1 and multi:Get()[1] == "C", "SetValues did not prune the selection")
+	assert(#Love.Flags.parts == 1, "the flag did not follow")
+
+	-- a single dropdown still behaves
+	local single = Bits:Dropdown({ Title = "One", Values = { "X", "Y" }, Default = "X" })
+	assert(single:Get() == "X", "single dropdown broke")
+	single:Select("Y")
+	assert(single:Get() == "Y", "Select should work on a single dropdown too")
+
+	-- textarea
+	local area = Bits:Textarea({ Title = "Notes", Default = "one\ntwo", Flag = "notes" })
+	assert(#area.Lines() == 2, "textarea did not split its lines")
+	area:Set("a\nb\nc")
+	assert(#area.Lines() == 3, "textarea Set failed")
+	assert(Love.Flags.notes == "a\nb\nc", "textarea flag did not follow")
+
+	-- colour picker
+	local seen
+	local pick = Bits:ColorPicker({
+		Title = "Tracer", Default = Color3.fromRGB(255, 0, 0), Flag = "tracer",
+		Callback = function(c) seen = c end,
+	})
+	assert(typeof(pick:Get()) == "Color3", "colour picker holds a Color3")
+	assert(pick:Get().R > 0.9 and pick:Get().B < 0.1, "colour picker lost its default")
+	pick:Set(Color3.fromRGB(0, 0, 255))
+	assert(seen and seen.B > 0.9 and seen.R < 0.1, "colour picker callback wrong")
+	assert(Love.Flags.tracer.B > 0.9, "colour picker flag did not follow")
+	pick:SetOpen(true)
+	assert(pick.Open == true, "colour picker did not open")
+	local bars = pick.Instance:FindFirstChild("Bars")
+	assert(bars and bars.Visible == true and #bars:GetChildren() >= 3,
+		"colour picker should show three bars")
+	pick:SetOpen(false)
+
+	-- progress
+	local bar = Bits:Progress({ Title = "Loading", Default = 0, Flag = "loading" })
+	assert(bar:Get() == 0, "progress default wrong")
+	bar:Set(0.5)
+	assert(bar:Get() == 0.5, "progress Set failed")
+	bar:Set(5)
+	assert(bar:Get() == 1, "progress must clamp to Max")
+	local counted = Bits:Progress({ Title = "Items", Max = 50, Default = 10 })
+	assert(counted:Get() == 10, "progress with a Max wrong")
+
+	-- console
+	local log = Bits:Console({ Title = "Log", MaxLines = 3 })
+	log:Append("one")
+	log:Append("two")
+	log:Append("three")
+	log:Append("four")
+	assert(#log.Lines == 3, "console did not trim to MaxLines")
+	assert(log.Lines[3].Text == "four", "console dropped the wrong end")
+	log:Error("bad")
+	assert(#log.Lines == 3, "console error line did not count")
+	log:Clear()
+	assert(#log.Lines == 0, "console Clear failed")
+	MOCK.step(0.2)
+
+	-- stat
+	local stat = Bits:Stat({ Title = "Ping", Value = "0ms", Flag = "ping" })
+	stat:Set("42ms")
+	assert(stat:Get() == "42ms", "stat Set failed")
+	assert(Love.Flags.ping == "42ms", "stat flag did not follow")
+
+	-- everything above survives a theme switch
+	Love:SetTheme("Midnight")
+	Love:SetTheme("Rose")
+	Main:Select()
+end
 
 --------------------------------------------------------------------
 -- flags, destroy, unload

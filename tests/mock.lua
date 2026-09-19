@@ -241,6 +241,8 @@ local SCHEMA = {
 	UIStroke   = set(INSTANCE, { "ApplyStrokeMode", "Color", "Enabled", "LineJoinMode", "Thickness", "Transparency" }),
 	UIPadding  = set(INSTANCE, { "PaddingBottom", "PaddingLeft", "PaddingRight", "PaddingTop" }),
 	UIGradient = set(INSTANCE, { "Color", "Enabled", "Offset", "Rotation", "Transparency" }),
+	UISizeConstraint = set(INSTANCE, { "MaxSize", "MinSize" }),
+	UIScale = set(INSTANCE, { "Scale" }),
 	UIListLayout = set(INSTANCE, {
 		"AbsoluteContentSize", "FillDirection", "HorizontalAlignment", "HorizontalFlex",
 		"ItemLineAlignment", "Padding", "SortOrder", "VerticalAlignment", "VerticalFlex", "Wraps",

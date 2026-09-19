@@ -83,11 +83,23 @@ Love.Themes.Rose.Accent     -- read any colour
 
 Switching repaints everything that is already on screen — the library records
 every painted property against the theme token it came from, so live elements
-change with it. The round dot in the window header cycles the theme, and the
-example's Themes tab drives the same calls.
+change with it.
+
+### Pickers stay in step
+
+The swatch in the window header opens a list of every palette, with the
+current one highlighted. A `ThemeDropdown` on a page does the same job.
+
+Changing the theme **any** way — the header swatch, a `ThemeDropdown`,
+`Love:SetTheme`, `Love:NextTheme` — moves every other picker with it. No
+picker can sit there naming a palette you are no longer using.
+
+```lua
+Group:ThemeDropdown({ Title = "Theme" })    -- a dropdown wired to the library
+```
 
 Each palette defines: `Bg`, `Panel`, `Card`, `Hover`, `Line`, `Text`, `Sub`,
-`Muted`, `Accent`, `OnAccent`.
+`Muted`, `Accent`, `OnAccent`, `Error`.
 
 ---
 
@@ -98,9 +110,11 @@ local Window = Love:CreateWindow({
     Title        = "My Script",
     SubTitle     = "v1.0",
     Theme        = "Rose",
-    Width        = 290,                       -- how far it slides in
-    HandleWidth  = 7,
-    HandleHeight = 130,
+    Width        = 340,                       -- how far it slides in
+    Height       = 0.92,                      -- fraction of the screen
+    Scale        = 1,                         -- multiplies the whole panel
+    HandleWidth  = 8,
+    HandleHeight = 150,
     Threshold    = 60,                        -- drag distance that commits
     Keybind      = Enum.KeyCode.RightShift,
     StartOpen    = false,
@@ -113,12 +127,26 @@ local Window = Love:CreateWindow({
 | `Window:SetOpen(bool)` | slide in or out |
 | `Window:Toggle()` | flip it |
 | `Window:SetTitle(text)` | rename the header |
+| `Window:SetScale(n)` | resize the whole panel, 0.7–2 |
 | `Window:SetToggleKey(keycode)` | rebind |
 | `Window:Notify(cfg)` | same as `Love:Notify` |
 | `Window:Destroy()` | remove this window only |
 
-`Window.Open`, `Window.Tabs`, `Window.ActiveTab` and `Window.Instance` (the
-drawer frame) are readable.
+`Window.Open`, `Window.Tabs`, `Window.ActiveTab`, `Window.Scale` and
+`Window.Instance` (the drawer frame) are readable.
+
+### If it is too small
+
+`Scale` multiplies the panel and everything in it, so one number fixes the
+whole interface rather than a config key per element:
+
+```lua
+Love:CreateWindow({ Title = "My Script", Scale = 1.25 })
+Window:SetScale(1.4)        -- or at runtime
+```
+
+Touch devices without a keyboard start at `1.15`, since the same pixel is a
+smaller share of a phone screen and a fatter target.
 
 ---
 
@@ -233,6 +261,34 @@ d:Toggle()
 The list expands inline inside the panel rather than floating over it, so it
 cannot end up off the side of a narrow sidebar.
 
+Pass `Multi = true` and it holds a list instead of a single pick:
+
+```lua
+local m = Group:Dropdown({
+    Title    = "Ignore",
+    Values   = { "Friends", "Team", "Downed" },
+    Multi    = true,
+    Flag     = "Ignore",
+    Callback = function(list, value, added) end,
+})
+m:Select("Team")            -- flips one value on or off
+m:Set({ "Team", "Downed" }) -- replace the whole selection
+m:Get()                     -- { "Team", "Downed" }
+```
+
+A multi dropdown stays open while you pick; pass `KeepOpen = false` to close
+it after each one. `SetValues` drops anything selected that is no longer in
+the list.
+
+### ThemeDropdown
+
+```lua
+Group:ThemeDropdown({ Title = "Theme" })
+```
+
+A dropdown of every palette that sets the theme when you pick, and follows
+along when the theme changes somewhere else. See [Themes](#themes).
+
 ### Input
 
 ```lua
@@ -262,6 +318,75 @@ k:Set(Enum.KeyCode.Q)
 Click the chip, then press a key to rebind. Escape clears it. Inputs the game
 has already handled are ignored, so typing in a chat box will not trigger it.
 
+### Textarea
+
+Multi-line text, for anything you would paste a list into.
+
+```lua
+local t = Group:Textarea({
+    Title       = "Target list",
+    Placeholder = "one name per line",
+    Height      = 84,
+    Default     = "",
+    Flag        = "Targets",
+    Callback    = function(text, enter) end,   -- on focus lost
+})
+t:Set("alice\nbob")
+t.Lines()       -- { "alice", "bob" }
+```
+
+### ColorPicker
+
+```lua
+local c = Group:ColorPicker({
+    Title    = "Tracer colour",
+    Default  = Color3.fromRGB(244, 114, 182),
+    Flag     = "TracerColour",
+    Callback = function(colour) end,
+})
+c:Set(Color3.fromRGB(0, 200, 255))
+c:SetOpen(true)
+```
+
+Hue, saturation and value as three bars rather than a gradient square — a
+square needs more room than a sidebar has, and bars are easier to hit with a
+thumb. The header swatch shows the current colour.
+
+### Progress
+
+```lua
+local p = Group:Progress({ Title = "Scan", Default = 0 })
+p:Set(0.5)                  -- 0..1 by default, shows "50%"
+
+local q = Group:Progress({ Title = "Items", Max = 50 })
+q:Set(12)                   -- shows "12 / 50"
+```
+
+Pass `Text = false` to hide the readout, or `Format = function(value, max)`
+to write your own.
+
+### Console
+
+A scrolling log you can print into. It trims itself and follows the newest
+line.
+
+```lua
+local log = Group:Console({ Title = "Output", Height = 110, MaxLines = 60 })
+log:Append("scan started")
+log:Success("done")         -- in the accent colour
+log:Error("no target")      -- in the theme's error colour
+log:Clear()
+```
+
+### Stat
+
+A label with a value pinned to the right, for anything you update on a loop.
+
+```lua
+local ping = Group:Stat({ Title = "Ping", Value = "-" })
+ping:Set("42ms")
+```
+
 ---
 
 ## Notifications
@@ -273,6 +398,10 @@ Love:Notify("short form")
 
 Toasts stack in the bottom-right corner, slide in, and remove themselves when
 their duration is up.
+
+They are deliberately small: the stack caps at three, pushing the oldest out
+rather than climbing the screen, and a long message is height-capped instead
+of growing without limit. Change the cap with `Love.MaxToasts = 5`.
 
 ---
 

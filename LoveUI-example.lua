@@ -77,6 +77,26 @@ do
 		end,
 	})
 
+	-- Multi = true keeps a list instead of a single pick
+	Combat:Dropdown({
+		Title    = "Ignore",
+		Values   = { "Friends", "Team", "Downed", "Behind walls" },
+		Multi    = true,
+		Flag     = "AimIgnore",
+		Callback = function(list)
+			print("ignoring " .. #list .. " things")
+		end,
+	})
+
+	Combat:ColorPicker({
+		Title    = "Tracer colour",
+		Default  = Color3.fromRGB(244, 114, 182),
+		Flag     = "TracerColour",
+		Callback = function(colour)
+			print("tracer:", colour)
+		end,
+	})
+
 	Combat:Button({
 		Title       = "Fire once",
 		Description = "Runs the callback a single time.",
@@ -162,6 +182,75 @@ do
 			Love:Notify({ Title = "Panic", Content = "Everything off.", Duration = 2 })
 		end,
 	})
+
+	Misc:Textarea({
+		Title       = "Target list",
+		Placeholder = "one name per line",
+		Height      = 84,
+		Flag        = "Targets",
+		Callback    = function(text)
+			print("targets:", text)
+		end,
+	})
+end
+
+-- ================================================================
+--  STATUS
+-- ================================================================
+
+local Status = Window:CreateTab("Status")
+
+do
+	local Live = Status:CreateSection("Live")
+
+	local ping = Live:Stat({ Title = "Ping", Value = "-" })
+	local fps  = Live:Stat({ Title = "FPS", Value = "-" })
+	local players = Live:Stat({ Title = "Players", Value = "-" })
+
+	local Work = Status:CreateSection("Work")
+
+	local bar = Work:Progress({ Title = "Scan", Default = 0 })
+	local log = Work:Console({ Title = "Output", Height = 110, MaxLines = 60 })
+
+	Work:Button({
+		Title       = "Run a scan",
+		Description = "Fills the bar and writes to the console.",
+		Callback    = function()
+			log:Append("scan started")
+			task.spawn(function()
+				for i = 1, 10 do
+					task.wait(0.15)
+					bar:Set(i / 10)
+					log:Append("checked batch " .. i)
+				end
+				log:Success("scan finished")
+			end)
+		end,
+	})
+
+	Work:Button({
+		Title    = "Clear output",
+		Callback = function()
+			log:Clear()
+			bar:Set(0)
+		end,
+	})
+
+	-- keep the stat rows current
+	task.spawn(function()
+		local Stats = game:GetService("Stats")
+		local RunService = game:GetService("RunService")
+		local Players = game:GetService("Players")
+		while task.wait(1) do
+			if Love.Unloaded then break end
+			local ok, ms = pcall(function()
+				return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+			end)
+			ping:Set(ok and (math.floor(ms) .. "ms") or "-")
+			fps:Set(math.floor(1 / RunService.Heartbeat:Wait()))
+			players:Set(#Players:GetPlayers() .. " / " .. Players.MaxPlayers)
+		end
+	end)
 end
 
 -- ================================================================
@@ -175,18 +264,14 @@ do
 
 	Palette:Label("Every palette has pink in it somewhere.")
 
-	Palette:Dropdown({
-		Title    = "Theme",
-		Values   = Love.ThemeOrder,
-		Default  = Love.ThemeName,
-		Callback = function(name)
-			Love:SetTheme(name)
-		end,
-	})
+	-- ThemeDropdown is wired to the library rather than to you: pick a
+	-- theme in the header, or call Love:SetTheme anywhere, and this row
+	-- moves with it.
+	Palette:ThemeDropdown({ Title = "Theme" })
 
 	Palette:Button({
 		Title       = "Next theme",
-		Description = "Same as the dot in the header.",
+		Description = "Cycles; watch the dropdown above follow.",
 		Callback    = function()
 			Love:NextTheme()
 		end,
@@ -201,6 +286,19 @@ do
 		-- when it is rebound, which is what we want here.
 		ChangedCallback = function(key)
 			Window:SetToggleKey(key)
+		end,
+	})
+
+	Control:Slider({
+		Title     = "Scale",
+		Description = "Makes the whole sidebar bigger or smaller.",
+		Min       = 0.8,
+		Max       = 1.6,
+		Default   = 1,
+		Increment = 0.05,
+		Rounding  = 2,
+		Callback  = function(value)
+			Window:SetScale(value)
 		end,
 	})
 
