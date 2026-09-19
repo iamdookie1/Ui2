@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  VOID  ·  v1.0.0
+	  VOID  ·  v1.1.0
 	  A monochrome interface library for Roblox script executors.
 	================================================================
 
@@ -29,6 +29,7 @@ local Players          = CloneRef(game:GetService("Players"))
 local TweenService     = CloneRef(game:GetService("TweenService"))
 local UserInputService = CloneRef(game:GetService("UserInputService"))
 local CoreGui          = CloneRef(game:GetService("CoreGui"))
+local GuiService       = CloneRef(game:GetService("GuiService"))
 local HttpService      = CloneRef(game:GetService("HttpService"))
 
 local LocalPlayer = Players.LocalPlayer
@@ -39,7 +40,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Void = {
 	Name        = "Void",
-	Version     = "1.0.0",
+	Version     = "1.1.0",
 
 	Windows     = {},
 	Flags       = {},
@@ -224,6 +225,53 @@ function Void.SetAccent(a, b)
 	end
 	return true
 end
+
+-- ================================================================
+--  INPUT CAPTURE
+-- ================================================================
+--
+--  While a slider is being dragged, nothing else may react to the cursor.
+--  Two things go wrong without this, and both of them did: rows light up
+--  as the pointer crosses them on its way past, and the page scrolls out
+--  from under the thing being dragged - on a phone, every drag was also a
+--  scroll. A drag takes the capture, everything else checks it.
+
+local Capture = { Owner = nil }
+local Scrollers = {}
+
+local function Scroller(frame)
+	table.insert(Scrollers, frame)
+	return frame
+end
+
+local function FreezeScrolling(frozen)
+	for index = #Scrollers, 1, -1 do
+		local frame = Scrollers[index]
+		if frame and frame.Parent then
+			frame.ScrollingEnabled = not frozen
+		else
+			table.remove(Scrollers, index)
+		end
+	end
+end
+
+function Capture.Take(owner)
+	if Capture.Owner == owner then return end
+	Capture.Owner = owner
+	FreezeScrolling(true)
+end
+
+function Capture.Give(owner)
+	if Capture.Owner ~= owner then return end
+	Capture.Owner = nil
+	FreezeScrolling(false)
+end
+
+function Capture.Blocked(owner)
+	return Capture.Owner ~= nil and Capture.Owner ~= owner
+end
+
+Void.Capture = Capture
 
 -- ================================================================
 --  MARKS
@@ -430,6 +478,66 @@ local ToastLayer = New("Frame", {
 	ZIndex = 400, Parent = Screen,
 })
 
+-- Dragging, shared by the window, the watermark and the mobile fob. It
+-- takes the capture too: dragging anything should not scroll a page.
+local function Drag(frame, handle, opts)
+	opts = opts or {}
+	local dragging, grabX, grabY, origin, moved = false, 0, 0, nil, false
+
+	handle.InputBegan:Connect(function(input)
+		if not IsClick(input) then return end
+		dragging, moved = true, false
+		grabX, grabY = input.Position.X, input.Position.Y
+		origin = frame.Position
+		Capture.Take(frame)
+		Run(opts.OnStart)
+	end)
+
+	Void:Connect(UserInputService.InputChanged, function(input)
+		if not dragging or not origin then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+		local dx, dy = input.Position.X - grabX, input.Position.Y - grabY
+		if math.abs(dx) > 3 or math.abs(dy) > 3 then moved = true end
+
+		local x = origin.X.Offset + dx
+		local y = origin.Y.Offset + dy
+
+		if opts.Clamp then
+			local view = Screen.AbsoluteSize
+			local span = frame.AbsoluteSize
+			if view.X > 0 then
+				x = Clamp(x, 0, math.max(0, view.X - span.X))
+				y = Clamp(y, 0, math.max(0, view.Y - span.Y))
+			end
+		end
+
+		frame.Position = UDim2.new(origin.X.Scale, x, origin.Y.Scale, y)
+	end)
+
+	Void:Connect(UserInputService.InputEnded, function(input)
+		if not dragging or not IsClick(input) then return end
+		dragging = false
+		Capture.Give(frame)
+		Run(opts.OnEnd, moved)
+	end)
+
+	return { Moved = function() return moved end }
+end
+
+-- how far down the screen Roblox's own top bar reaches, so nothing of
+-- ours is parked underneath it
+local function TopInset()
+	local top = 36
+	pcall(function()
+		local rect = GuiService.TopbarInset
+		if rect and rect.Max and rect.Max.Y and rect.Max.Y > 0 then top = rect.Max.Y end
+	end)
+	return top
+end
+
+
 -- ================================================================
 --  POPOUTS
 -- ================================================================
@@ -509,20 +617,20 @@ end
 --  Fixed heights, laid out by hand. A card that measures itself while
 --  holding something sized from the card measures nothing.
 
-local TOAST_WIDTH = 246
-local TOAST_TALL  = 60
-local TOAST_SHORT = 40
+local TOAST_WIDTH = 262
+local TOAST_TALL  = 66
+local TOAST_SHORT = 44
 
 Void.MaxToasts = 4
 
 local ToastStack = New("Frame", {
 	Name = "Stack", BackgroundTransparency = 1,
-	AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16),
+	AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -18, 1, -18),
 	Size = UDim2.fromOffset(TOAST_WIDTH, 0), AutomaticSize = Enum.AutomaticSize.Y,
 	ZIndex = 401, Parent = ToastLayer,
 }, {
 	New("UIListLayout", {
-		Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
 		VerticalAlignment = Enum.VerticalAlignment.Bottom,
 		HorizontalAlignment = Enum.HorizontalAlignment.Right,
 	}),
@@ -542,6 +650,7 @@ function Void.Notify(a, b)
 	local height = body and TOAST_TALL or TOAST_SHORT
 	local duration = tonumber(cfg.Duration) or 4
 	local urgent = cfg.Warn == true or cfg.Error == true
+	local accent = urgent and "Warn" or "Edge"
 
 	toastOrder = toastOrder + 1
 	local limit = math.max(1, tonumber(Void.MaxToasts) or 4)
@@ -557,26 +666,47 @@ function Void.Notify(a, b)
 
 	local card = New("Frame", {
 		Name = "Toast", BorderSizePixel = 0, BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(28, 0), Size = UDim2.new(1, 0, 1, 0),
-		ZIndex = 402, Parent = slot,
+		Position = UDim2.fromOffset(30, 0), Size = UDim2.new(1, 0, 1, 0),
+		ClipsDescendants = true, ZIndex = 402, Parent = slot,
 	})
-	Sharp(4, card)
+	Sharp(5, card)
 	Wash(card, "BackgroundColor3", "Panel")
 	local stroke = Hair(card, "Line", 1)
 
-	-- one white bar down the left edge. That is the entire decoration.
+	-- a hairline of white along the top edge. It is one pixel and it is the
+	-- difference between a card and a rectangle.
+	local sheen = New("Frame", {
+		Name = "Sheen", BorderSizePixel = 0, BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -12, 0, 1),
+		ZIndex = 404, Parent = card,
+	})
+	Wash(sheen, "BackgroundColor3", "Text")
+
 	local rail = New("Frame", {
 		Name = "Rail", BorderSizePixel = 0, BackgroundTransparency = 1,
 		Size = UDim2.new(0, 2, 1, 0), ZIndex = 403, Parent = card,
 	})
-	Wash(rail, "BackgroundColor3", urgent and "Warn" or "Edge")
+	Wash(rail, "BackgroundColor3", accent)
+
+	-- the mark sits in its own bordered square, which gives the text an
+	-- edge to line up against
+	local block = New("Frame", {
+		Name = "Block", BorderSizePixel = 0, BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0, 0), Position = UDim2.fromOffset(14, 12),
+		Size = UDim2.fromOffset(20, 20), ZIndex = 403, Parent = card,
+	})
+	Sharp(3, block)
+	Wash(block, "BackgroundColor3", "Card")
+	local blockEdge = Hair(block, "Line", 1)
+	local glyph = Glyph(block, 10, 404)
+	glyph.SetGapColour("Card")
 
 	local titleLabel = Say({
 		Name = "Title", Parent = card, ZIndex = 403, Font = FONT_M, TextSize = 12.5,
 		Text = tostring(cfg.Title or "Void"), TextTransparency = 1,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		Position = UDim2.new(0, 14, 0, body and 10 or 0),
-		Size = UDim2.new(1, -26, 0, body and 15 or height),
+		Position = UDim2.new(0, 44, 0, body and 11 or 0),
+		Size = UDim2.new(1, -60, 0, body and 15 or height - 3),
 	})
 	if urgent then Wash(titleLabel, "TextColor3", "Warn") end
 
@@ -587,32 +717,52 @@ function Void.Notify(a, b)
 			Key = "Sub", Text = tostring(body), TextWrapped = true,
 			TextYAlignment = Enum.TextYAlignment.Top, TextTransparency = 1,
 			TextTruncate = Enum.TextTruncate.AtEnd,
-			Position = UDim2.fromOffset(14, 27), Size = UDim2.new(1, -26, 0, 26),
+			Position = UDim2.fromOffset(44, 29), Size = UDim2.new(1, -60, 0, 26),
 		})
 	end
 
-	-- the clock: a hairline under the card that empties as the toast ages
+	-- the clock runs the full width of the card on a track of its own, so
+	-- what is left reads at a glance instead of being a stray hairline
 	local clock
 	if duration > 0 then
 		local lane = New("Frame", {
-			Name = "Clock", BackgroundTransparency = 1, ClipsDescendants = true,
-			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, 0),
-			Size = UDim2.new(1, 0, 0, 1), ZIndex = 403, Parent = card,
+			Name = "Clock", BorderSizePixel = 0, BackgroundTransparency = 0.55,
+			ClipsDescendants = true, AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 2),
+			ZIndex = 403, Parent = card,
 		})
+		Wash(lane, "BackgroundColor3", "Line")
+
 		clock = New("Frame", {
-			Name = "Left", BorderSizePixel = 0, BackgroundTransparency = 0.4,
-			Size = UDim2.fromScale(1, 1), ZIndex = 403, Parent = lane,
+			Name = "Left", BorderSizePixel = 0, Size = UDim2.fromScale(1, 1),
+			ZIndex = 404, Parent = lane,
 		})
-		Wash(clock, "BackgroundColor3", "Edge")
+		Wash(clock, "BackgroundColor3", accent)
 	end
+
+	local dismiss = Cross({
+		Parent = card, ZIndex = 405, Size = 8, Key = "Mute",
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0, 20),
+	})
+	dismiss.Instance.BackgroundTransparency = 1
 
 	local hit = New("TextButton", {
 		Name = "Hit", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-		Size = UDim2.fromScale(1, 1), ZIndex = 404, Parent = card,
+		Size = UDim2.fromScale(1, 1), ZIndex = 406, Parent = card,
 	})
+	hit.MouseEnter:Connect(function()
+		Move(card, { BackgroundTransparency = 0 }, Ease.Tap)
+		dismiss.SetColour(Ink.Text)
+	end)
+	hit.MouseLeave:Connect(function()
+		Move(card, { BackgroundTransparency = 0.04 }, Ease.Tap)
+		dismiss.SetColour(Ink.Mute)
+	end)
 
-	Move(card, { BackgroundTransparency = 0, Position = UDim2.fromOffset(0, 0) }, Ease.Glide)
-	Move(stroke, { Transparency = 0.2 }, Ease.Glide)
+	Move(card, { BackgroundTransparency = 0.04, Position = UDim2.fromOffset(0, 0) }, Ease.Glide)
+	Move(stroke, { Transparency = 0.15 }, Ease.Glide)
+	Move(blockEdge, { Transparency = 0.25 }, Ease.Glide)
+	Move(sheen, { BackgroundTransparency = 0.9 }, Ease.Glide)
 	Move(rail, { BackgroundTransparency = 0 }, Ease.Glide)
 	Move(titleLabel, { TextTransparency = 0 }, Ease.Glide)
 	if bodyLabel then Move(bodyLabel, { TextTransparency = 0.05 }, Ease.Glide) end
@@ -629,8 +779,10 @@ function Void.Notify(a, b)
 			if fn == close then table.remove(liveToasts, index); break end
 		end
 
-		Move(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(28, 0) }, Ease.Out)
+		Move(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(30, 0) }, Ease.Out)
 		Move(stroke, { Transparency = 1 }, Ease.Out)
+		Move(blockEdge, { Transparency = 1 }, Ease.Out)
+		Move(sheen, { BackgroundTransparency = 1 }, Ease.Out)
 		Move(rail, { BackgroundTransparency = 1 }, Ease.Out)
 		Move(titleLabel, { TextTransparency = 1 }, Ease.Out)
 		if bodyLabel then Move(bodyLabel, { TextTransparency = 1 }, Ease.Out) end
@@ -665,9 +817,16 @@ function Void.Dialog(a, b)
 		Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(300, 132),
 		ZIndex = 301, Parent = shade,
 	})
-	Sharp(4, box)
+	Sharp(5, box)
 	Wash(box, "BackgroundColor3", "Panel")
 	Hair(box, "Line", 0)
+
+	local boxSheen = New("Frame", {
+		Name = "Sheen", BorderSizePixel = 0, BackgroundTransparency = 0.88,
+		Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -16, 0, 1),
+		ZIndex = 303, Parent = box,
+	})
+	Wash(boxSheen, "BackgroundColor3", "Text")
 
 	Say({
 		Name = "Title", Parent = box, ZIndex = 302, Font = FONT_M, TextSize = 13.5,
@@ -749,7 +908,7 @@ local function Reactive(button, rest, lift)
 	local inside, held = false, false
 	local function settle()
 		local key = rest
-		if inside or held then key = lift end
+		if (inside or held) and not Capture.Blocked(button) then key = lift end
 		Move(button, { BackgroundColor3 = Ink[key] }, Ease.Tap)
 		for _, entry in ipairs(Bound) do
 			if entry.Instance == button and entry.Property == "BackgroundColor3" then
@@ -757,7 +916,11 @@ local function Reactive(button, rest, lift)
 			end
 		end
 	end
-	button.MouseEnter:Connect(function() inside = true; settle() end)
+	button.MouseEnter:Connect(function()
+		if Capture.Blocked(button) then return end
+		inside = true
+		settle()
+	end)
 	button.MouseLeave:Connect(function() inside = false; held = false; settle() end)
 	button.InputBegan:Connect(function(input) if IsClick(input) then held = true; settle() end end)
 	button.InputEnded:Connect(function(input) if IsClick(input) then held = false; settle() end end)
@@ -792,6 +955,7 @@ local function Plate(parent, opts)
 	Wash(marker, "BackgroundColor3", "Edge")
 
 	plate.MouseEnter:Connect(function()
+		if Capture.Blocked(plate) then return end
 		Move(marker, { BackgroundTransparency = 0 }, Ease.Out)
 	end)
 	plate.MouseLeave:Connect(function()
@@ -1227,6 +1391,9 @@ local function Elements(holder, parent)
 		hit.InputBegan:Connect(function(input)
 			if not IsClick(input) then return end
 			dragging = true
+			-- nothing else reacts until this is let go: no row lights up as
+			-- the cursor crosses it, and no page scrolls underneath
+			Capture.Take(api)
 			Move(glow, { Thickness = 4, Transparency = 0.4 }, Ease.Out)
 			Move(grip, { Size = UDim2.fromOffset(3, 16) }, Ease.Out)
 			apply(input.Position.X)
@@ -1240,6 +1407,7 @@ local function Elements(holder, parent)
 		Void:Connect(UserInputService.InputEnded, function(input)
 			if not dragging or not IsClick(input) then return end
 			dragging = false
+			Capture.Give(api)
 			Move(glow, { Thickness = 0, Transparency = 0.5 }, Ease.Out)
 			Move(grip, { Size = UDim2.fromOffset(3, 12) }, Ease.Out)
 		end)
@@ -1747,6 +1915,7 @@ local function Elements(holder, parent)
 				hit.InputBegan:Connect(function(input)
 					if not IsClick(input) then return end
 					dragging = true
+					Capture.Take(api)
 					grab(input.Position.X)
 				end)
 				Void:Connect(UserInputService.InputChanged, function(input)
@@ -1756,7 +1925,10 @@ local function Elements(holder, parent)
 					grab(input.Position.X)
 				end)
 				Void:Connect(UserInputService.InputEnded, function(input)
-					if dragging and IsClick(input) then dragging = false end
+					if dragging and IsClick(input) then
+						dragging = false
+						Capture.Give(api)
+					end
 				end)
 			end
 		end
@@ -1970,13 +2142,13 @@ local function Elements(holder, parent)
 			})
 		end
 
-		local view = New("ScrollingFrame", {
+		local view = Scroller(New("ScrollingFrame", {
 			Name = "View", BorderSizePixel = 0, LayoutOrder = 2,
 			Size = UDim2.new(1, 0, 0, tonumber(cfg.Height) or 104),
 			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-			ScrollBarThickness = 1, ScrollingDirection = Enum.ScrollingDirection.Y,
+			ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.Y,
 			ZIndex = 13, Parent = box,
-		})
+		}))
 		Sharp(3, view)
 		Wash(view, "BackgroundColor3", "Void")
 		Wash(view, "ScrollBarImageColor3", "Line")
@@ -2339,6 +2511,15 @@ function Void.CreateWindow(a, b)
 	Sharp(5, frame)
 	Wash(frame, "BackgroundColor3", "Panel")
 	local frameEdge = Hair(frame, "Line", 0)
+
+	-- one pixel of white along the top, so the window has a lit edge rather
+	-- than being a rectangle cut out of the screen
+	local frameSheen = New("Frame", {
+		Name = "Sheen", BorderSizePixel = 0, BackgroundTransparency = 0.88,
+		Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -16, 0, 1),
+		ZIndex = 14, Parent = frame,
+	})
+	Wash(frameSheen, "BackgroundColor3", "Text")
 	Window.Instance = frame
 	Window.Frame = frame
 
@@ -2351,26 +2532,34 @@ function Void.CreateWindow(a, b)
 	})
 	Inset(bar, 0, 0, 14, 12)
 
-	local mark = Glyph(bar, 13, 13)
-	mark.Instance.AnchorPoint = Vector2.new(0, 0.5)
-	mark.Instance.Position = UDim2.new(0, 0, 0.5, 0)
+	local markBlock = New("Frame", {
+		Name = "Block", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(22, 22),
+		ZIndex = 13, Parent = bar,
+	})
+	Sharp(3, markBlock)
+	Wash(markBlock, "BackgroundColor3", "Card")
+	Hair(markBlock, "Line", 0.35)
+
+	local mark = Glyph(markBlock, 11, 14)
+	mark.SetGapColour("Card")
 
 	local titleLabel = Say({
 		Name = "Title", Parent = bar, ZIndex = 13, Font = FONT_M, TextSize = 13,
-		Text = Window.Title, Position = UDim2.new(0, 24, 0, 0),
+		Text = Window.Title, Position = UDim2.new(0, 32, 0, 0),
 		Size = UDim2.new(0.5, 0, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd,
 	})
 
 	local subLabel = Say({
-		Name = "SubTitle", Parent = bar, ZIndex = 13, Font = MONO, TextSize = 11,
-		Key = "Mute", Text = tostring(cfg.SubTitle or ""),
-		Position = UDim2.new(0, 24 + 8, 0, 0), Size = UDim2.new(0.5, -40, 1, 0),
+		Name = "SubTitle", Parent = bar, ZIndex = 13, Font = MONO, TextSize = 10.5,
+		Key = "Mute", Text = string.upper(tostring(cfg.SubTitle or "")),
+		Position = UDim2.new(0, 40, 0, 0), Size = UDim2.new(0.5, -50, 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
-	-- push the subtitle past the title's text width, measured once it exists
+	-- push the subtitle past the title's own width, measured once it exists
 	task.defer(function()
 		if titleLabel.Parent then
-			subLabel.Position = UDim2.new(0, 24 + math.ceil(titleLabel.TextBounds.X) + 10, 0, 0)
+			subLabel.Position = UDim2.new(0, 32 + math.ceil(titleLabel.TextBounds.X) + 10, 0, 0)
 		end
 	end)
 
@@ -2425,12 +2614,12 @@ function Void.CreateWindow(a, b)
 		Size = UDim2.new(1, 0, 1, -60), ClipsDescendants = true, ZIndex = 12, Parent = frame,
 	})
 
-	local rail = New("ScrollingFrame", {
+	local rail = Scroller(New("ScrollingFrame", {
 		Name = "Rail", BackgroundTransparency = 1, BorderSizePixel = 0,
 		Size = UDim2.new(0, railWidth, 1, 0), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 0,
 		ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 12, Parent = body,
-	})
+	}))
 	Inset(rail, 12, 12, 12, 10)
 	Stack(rail, 4)
 
@@ -2450,11 +2639,14 @@ function Void.CreateWindow(a, b)
 	})
 	Wash(marker, "BackgroundColor3", "Edge")
 
+	-- the pages sit in a darker well than the rail, which is what makes the
+	-- window read as two areas rather than one flat sheet
 	local pages = New("Frame", {
-		Name = "Pages", BackgroundTransparency = 1,
+		Name = "Pages", BorderSizePixel = 0,
 		Position = UDim2.fromOffset(railWidth + 1, 0), Size = UDim2.new(1, -railWidth - 1, 1, 0),
 		ClipsDescendants = true, ZIndex = 12, Parent = body,
 	})
+	Wash(pages, "BackgroundColor3", "Void")
 
 	----------------------------------------------------------------
 	-- status strip
@@ -2472,9 +2664,18 @@ function Void.CreateWindow(a, b)
 	})
 	Wash(stripRule, "BackgroundColor3", "Line")
 
+	local pip = New("Frame", {
+		Name = "Pip", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(4, 4),
+		ZIndex = 13, Parent = strip,
+	})
+	Sharp(2, pip)
+	Wash(pip, "BackgroundColor3", "Edge")
+
 	local statusLabel = Say({
 		Name = "Text", Parent = strip, ZIndex = 13, Font = MONO, TextSize = 10.5,
-		Key = "Mute", Text = tostring(cfg.Status or "ready"), Size = UDim2.new(0.6, 0, 1, 0),
+		Key = "Mute", Text = tostring(cfg.Status or "ready"),
+		Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0.6, -12, 1, 0),
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
 
@@ -2489,6 +2690,12 @@ function Void.CreateWindow(a, b)
 		local text = p2
 		if p1 ~= Window then text = p1 end
 		statusLabel.Text = tostring(text)
+		-- the pip blinks, so a line that changes while you are looking
+		-- elsewhere still registers when you look back
+		Move(pip, { Size = UDim2.fromOffset(6, 6), BackgroundTransparency = 0 }, Ease.Tap)
+		task.delay(0.2, function()
+			if pip.Parent then Move(pip, { Size = UDim2.fromOffset(4, 4) }, Ease.Out) end
+		end)
 		return statusLabel.Text
 	end
 
@@ -2549,27 +2756,15 @@ function Void.CreateWindow(a, b)
 	closeButton.MouseButton1Click:Connect(function() Window.SetOpen(Window, false) end)
 
 	-- drag by the title bar
-	local dragging, grabX, grabY, startPos = false, 0, 0, nil
-	bar.InputBegan:Connect(function(input)
-		if not IsClick(input) then return end
-		dragging = true
-		grabX, grabY = input.Position.X, input.Position.Y
-		startPos = frame.Position
-		Move(frameEdge, { Color = Ink.Edge, Transparency = 0.4 }, Ease.Tap)
-	end)
-	Void:Connect(UserInputService.InputChanged, function(input)
-		if not dragging or not startPos then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		frame.Position = UDim2.new(
-			startPos.X.Scale, startPos.X.Offset + (input.Position.X - grabX),
-			startPos.Y.Scale, startPos.Y.Offset + (input.Position.Y - grabY))
-	end)
-	Void:Connect(UserInputService.InputEnded, function(input)
-		if not dragging or not IsClick(input) then return end
-		dragging = false
-		Move(frameEdge, { Color = Ink.Line, Transparency = 0 }, Ease.Out)
-	end)
+	Drag(frame, bar, {
+		OnStart = function()
+			Popout.Close()
+			Move(frameEdge, { Color = Ink.Edge, Transparency = 0.4 }, Ease.Tap)
+		end,
+		OnEnd = function()
+			Move(frameEdge, { Color = Ink.Line, Transparency = 0 }, Ease.Out)
+		end,
+	})
 
 	Void:Connect(UserInputService.InputBegan, function(input, processed)
 		if processed then return end
@@ -2623,6 +2818,7 @@ function Void.CreateWindow(a, b)
 		})
 		Sharp(3, button)
 		Wash(button, "BackgroundColor3", "Card")
+		local buttonEdge = Hair(button, "Line", 1)
 
 		local label = Say({
 			Parent = button, ZIndex = 14, Font = FONT_M, TextSize = 11.5, Key = "Mute",
@@ -2630,12 +2826,12 @@ function Void.CreateWindow(a, b)
 			Size = UDim2.new(1, -16, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd,
 		})
 
-		local page = New("ScrollingFrame", {
+		local page = Scroller(New("ScrollingFrame", {
 			Name = name, BackgroundTransparency = 1, BorderSizePixel = 0,
 			Size = UDim2.fromScale(1, 1), Visible = false, CanvasSize = UDim2.new(),
-			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 1,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
 			ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 12, Parent = pages,
-		})
+		}))
 		Wash(page, "ScrollBarImageColor3", "Line")
 		Inset(page, 14, 16, 16, 14)
 		Stack(page, 10)
@@ -2644,6 +2840,7 @@ function Void.CreateWindow(a, b)
 
 		local function paint(active)
 			Move(button, { BackgroundTransparency = active and 0 or 1 }, Ease.Out)
+			Move(buttonEdge, { Transparency = active and 0.45 or 1 }, Ease.Out)
 			Move(label, { TextColor3 = active and Ink.Text or Ink.Mute }, Ease.Out)
 			for _, entry in ipairs(Bound) do
 				if entry.Instance == label then entry.Key = active and "Text" or "Mute" end
@@ -2652,14 +2849,14 @@ function Void.CreateWindow(a, b)
 		Tab.Paint = paint
 
 		button.MouseEnter:Connect(function()
-			if Window.ActiveTab ~= Tab then
-				Move(label, { TextColor3 = Ink.Sub }, Ease.Tap)
-			end
+			if Window.ActiveTab == Tab or Capture.Blocked(button) then return end
+			Move(button, { BackgroundTransparency = 0.5 }, Ease.Tap)
+			Move(label, { TextColor3 = Ink.Sub }, Ease.Tap)
 		end)
 		button.MouseLeave:Connect(function()
-			if Window.ActiveTab ~= Tab then
-				Move(label, { TextColor3 = Ink.Mute }, Ease.Tap)
-			end
+			if Window.ActiveTab == Tab then return end
+			Move(button, { BackgroundTransparency = 1 }, Ease.Tap)
+			Move(label, { TextColor3 = Ink.Mute }, Ease.Tap)
 		end)
 
 		function Tab.Select()
@@ -2727,6 +2924,20 @@ function Void.CreateWindow(a, b)
 				Key = "Mute", Text = string.upper(tostring(scfg.Title or "Section")),
 				Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -30, 1, 0),
 			})
+
+			-- a rule from the end of the heading to the right edge, so a
+			-- section reads as a band across the page rather than a word
+			local headRule = New("Frame", {
+				Name = "Rule", BorderSizePixel = 0, BackgroundTransparency = 0.4,
+				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+				Size = UDim2.new(1, -60, 0, 1), ZIndex = 11, Parent = head,
+			})
+			Wash(headRule, "BackgroundColor3", "Line")
+			task.defer(function()
+				if heading.Parent then
+					headRule.Size = UDim2.new(1, -(math.ceil(heading.TextBounds.X) + 24), 0, 1)
+				end
+			end)
 
 			local items = New("Frame", {
 				Name = "Items", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
@@ -2805,44 +3016,78 @@ function Void.CreateWindow(a, b)
 	end
 
 	----------------------------------------------------------------
-	-- a button for phones, where there is no Right Shift
+	-- the two things that live outside the window. Both sit below
+	-- Roblox's own top bar rather than under it, and both can be dragged
+	-- wherever you want them.
 	----------------------------------------------------------------
+	local function parkBelowTopbar(object, x)
+		object.Position = UDim2.fromOffset(x, TopInset() + 8)
+	end
+
 	if cfg.MobileButton ~= false then
 		local fob = New("TextButton", {
 			Name = "Fob", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0, 0), Position = UDim2.fromOffset(14, 82),
 			Size = UDim2.fromOffset(34, 34), ZIndex = 20, Parent = WindowLayer,
 		})
 		Sharp(4, fob)
 		Wash(fob, "BackgroundColor3", "Panel")
 		Hair(fob, "Line", 0)
 		Glyph(fob, 13, 21)
-		fob.MouseButton1Click:Connect(function() Window.Toggle() end)
+		parkBelowTopbar(fob, 12)
+
+		-- a drag moves it, a tap toggles the window. Without the distinction
+		-- every attempt to move it would also open something.
+		Drag(fob, fob, {
+			Clamp = true,
+			OnEnd = function(moved)
+				if not moved then Window.Toggle() end
+			end,
+		})
 		Window.Fob = fob
 	end
 
 	if cfg.Watermark ~= false then
-		local stampWidth = 168
-		local stamp = New("Frame", {
-			Name = "Watermark", BorderSizePixel = 0,
-			Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(stampWidth, 26),
-			ZIndex = 20, Parent = WindowLayer,
+		local stamp = New("TextButton", {
+			Name = "Watermark", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
+			Size = UDim2.fromOffset(176, 26), ZIndex = 20, Parent = WindowLayer,
 		})
 		Sharp(4, stamp)
 		Wash(stamp, "BackgroundColor3", "Panel")
 		Hair(stamp, "Line", 0)
+		parkBelowTopbar(stamp, cfg.MobileButton == false and 12 or 54)
+
+		local stampPip = New("Frame", {
+			Name = "Pip", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 10, 0.5, 0), Size = UDim2.fromOffset(4, 4),
+			ZIndex = 21, Parent = stamp,
+		})
+		Sharp(2, stampPip)
+		Wash(stampPip, "BackgroundColor3", "Edge")
 
 		local stampText = Say({
-			Parent = stamp, ZIndex = 21, Font = MONO, TextSize = 10.5, Key = "Sub",
-			Text = tostring(cfg.WatermarkText or (Window.Title .. " · void")),
-			Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -20, 1, 0),
+			Name = "Text", Parent = stamp, ZIndex = 21, Font = MONO, TextSize = 10.5,
+			Key = "Sub", Text = tostring(cfg.WatermarkText or (Window.Title .. " · void")),
+			Position = UDim2.fromOffset(20, 0), Size = UDim2.new(1, -30, 1, 0),
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
+
+		Drag(stamp, stamp, { Clamp = true })
+
+		-- Roblox can resize its own top bar while the game is running
+		Void:Connect(GuiService:GetPropertyChangedSignal("TopbarInset"), function()
+			if stamp.Position.Y.Offset < TopInset() + 8 then
+				parkBelowTopbar(stamp, stamp.Position.X.Offset)
+			end
+			if Window.Fob and Window.Fob.Position.Y.Offset < TopInset() + 8 then
+				parkBelowTopbar(Window.Fob, Window.Fob.Position.X.Offset)
+			end
+		end)
 
 		Window.Watermark = {
 			Instance = stamp,
 			SetText = function(text) stampText.Text = tostring(text) end,
 			SetVisible = function(state) stamp.Visible = state and true or false end,
+			Reset = function() parkBelowTopbar(stamp, cfg.MobileButton == false and 12 or 54) end,
 		}
 	end
 

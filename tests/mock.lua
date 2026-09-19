@@ -341,7 +341,13 @@ Instance_mt.__instance = true
 
 local DEFAULTS = {
 	AbsolutePosition = function() return vec2(0, 0) end,
-	AbsoluteSize     = function() return vec2(200, 200) end,
+	-- a GuiObject that was never measured reports a small box; a ScreenGui
+	-- reports a viewport, because code that clamps to the screen needs a
+	-- screen-shaped number rather than a 200px square
+	AbsoluteSize     = function(inst)
+		if inst and inst.ClassName == "ScreenGui" then return vec2(1280, 720) end
+		return vec2(200, 200)
+	end,
 	TextBounds       = function() return vec2(40, 12) end,
 	-- Roblox never returns nil for these, so neither should the mock: reading
 	-- them off instances we did not create (the topbar's own icons) is exactly
@@ -382,7 +388,7 @@ function Instance_mt.__index(self, key)
 
 	local d = DEFAULTS[key]
 	if d then
-		local value = d()
+		local value = d(self)
 		rawget(self, "_props")[key] = value
 		return value
 	end

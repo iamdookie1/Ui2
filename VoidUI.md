@@ -41,6 +41,9 @@ option. Nothing else is ever coloured.
   toggle key on the right.
 - **Dropdowns and pickers open as popouts** in a layer above the window, so
   opening one never pushes the rest of the page around.
+- **A drag owns the pointer.** While a slider or a colour bar is being
+  dragged, no row lights up under the cursor and no page scrolls — including
+  on touch, where every drag used to be a scroll as well.
 
 Every method accepts both call styles, so `Window:CreateTab(...)` and
 `Window.CreateTab(...)` both work.
@@ -89,7 +92,24 @@ local Window = Void:CreateWindow({
 | `Window:Destroy()` | remove this window only |
 
 Drag the title bar to move it. The dash folds it, the cross hides it. On a
-phone the fob in the top left toggles it, since there is no Right Shift.
+phone the fob toggles it, since there is no Right Shift — tap it to toggle,
+drag it to move it somewhere else.
+
+### The watermark and the fob
+
+Both sit **below Roblox's own top bar** rather than under it, using
+`GuiService.TopbarInset`, and both follow it if Roblox resizes it mid-game.
+Both are draggable and stay on screen.
+
+```lua
+Window.Watermark.SetText("my script · v2")
+Window.Watermark.SetVisible(false)
+Window.Watermark.Reset()      -- park it back under the top bar
+Window.Watermark.Instance     -- drag it yourself if you want
+```
+
+Pass `Watermark = false` or `MobileButton = false` on the window to skip
+either.
 
 `Window.Open`, `Window.Minimised`, `Window.Tabs`, `Window.ActiveTab`,
 `Window.Frame` and `Window.Watermark` are readable.
@@ -266,10 +286,12 @@ Void:Notify({ Title = "Broken", Warn = true })
 Void:Notify("short form")
 ```
 
-Fixed heights — 40 for a title, 60 with a body — stacked bottom right, capped
-at four (`Void.MaxToasts`). Each carries a white bar down its left edge and a
-hairline underneath that empties as it ages. A warning toast wears the warning
-colour instead.
+Fixed heights — 44 for a title, 66 with a body — stacked bottom right, capped
+at four (`Void.MaxToasts`). Each one carries a white bar down its left edge,
+the library mark in a bordered block, a lit hairline along its top edge, and a
+clock along the bottom that empties as it ages. Hovering one brings up a cross
+and lifts it slightly; clicking anywhere dismisses it. A warning toast wears
+the warning colour throughout instead.
 
 ## Dialogs
 
@@ -283,6 +305,22 @@ Void:Dialog({
 ```
 
 Or pass your own `Buttons = { { Title = ..., Callback = ..., Primary = true } }`.
+
+---
+
+## Capture
+
+One idea, worth naming because two bugs came from not having it: while
+something is being dragged, it owns the pointer.
+
+```lua
+Void.Capture.Owner     -- what holds it, or nil
+```
+
+A slider, a colour bar, the window, the watermark and the fob all take it
+while they are being dragged. Every hover check asks first, and every
+scrolling frame in the library is frozen for the duration, so a drag on a
+phone cannot also scroll the page out from under your thumb.
 
 ---
 

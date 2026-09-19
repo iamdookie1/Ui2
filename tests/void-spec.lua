@@ -29,7 +29,8 @@ local bar = frame:FindFirstChild("Bar")
 local body = frame:FindFirstChild("Body")
 local strip = frame:FindFirstChild("Status")
 assert(bar and body and strip, "the window is missing its chrome")
-assert(bar:FindFirstChild("Mark"), "no library mark in the title bar")
+assert(bar:FindFirstChild("Block") and bar.Block:FindFirstChild("Mark"),
+	"no library mark in the title bar")
 assert(bar:FindFirstChild("Title").Text == "Void Demo", "wrong title")
 assert(body:FindFirstChild("Rail"), "no tab rail")
 assert(body:FindFirstChild("Marker"), "no rail marker")
@@ -333,15 +334,17 @@ do
 	end
 
 	local short = Void:Notify({ Title = "Short", Duration = 0 })
-	assert(short.Instance.Parent.Size.Y.Offset == 40,
-		"a title-only toast should be 40 tall, got " .. short.Instance.Parent.Size.Y.Offset)
+	assert(short.Instance.Parent.Size.Y.Offset == 44,
+		"a title-only toast should be 44 tall, got " .. short.Instance.Parent.Size.Y.Offset)
 	assert(short.Instance:FindFirstChildOfClass("UIListLayout") == nil,
 		"a toast must be laid out by hand, not by a list")
 	assert(short.Instance:FindFirstChild("Rail"), "a toast has no accent rail")
 	short.Close()
 
 	local long = Void:Notify({ Title = "Long", Content = string.rep("word ", 90), Duration = 0 })
-	assert(long.Instance.Parent.Size.Y.Offset == 60, "a toast with content should be 60 tall")
+	assert(long.Instance.Parent.Size.Y.Offset == 66, "a toast with content should be 66 tall")
+	assert(long.Instance:FindFirstChild("Block"), "a toast should carry the mark in a block")
+	assert(long.Instance:FindFirstChild("Sheen"), "a toast should have a lit top edge")
 	assert(long.Instance:FindFirstChild("Content").Size.Y.Offset <= 26,
 		"the body should be a fixed two lines")
 
@@ -428,6 +431,101 @@ do
 	assert(Void:DeleteConfig("main"), "deleting failed")
 	assert(#Void:ListConfigs() == 0, "the config should be gone")
 	assert(Void:LoadConfig("nothing") == false, "loading a missing config should fail cleanly")
+end
+
+--------------------------------------------------------------------
+-- a drag owns the pointer until it is let go
+--------------------------------------------------------------------
+--
+-- Two things used to go wrong while a slider was being dragged: rows lit
+-- up as the cursor crossed them, and the page scrolled out from under the
+-- thing being dragged. Both are the same missing idea - a drag takes the
+-- capture, and everything else checks it before reacting.
+do
+	local Feel = Main:CreateSection("Feel")
+	local bystander = Feel:Button({ Title = "Do not light up" }).Instance
+	local marker = bystander:FindFirstChild("Marker")
+	local page = Main.Page
+
+	local lane = slider.Instance:FindFirstChild("Lane")
+	local hit = lane:FindFirstChild("Hit")
+	assert(hit, "the slider has no drag surface")
+
+	assert(page.ScrollingEnabled ~= false, "the page should scroll when nothing is being dragged")
+	assert(Void.Capture.Owner == nil, "nothing should hold the capture yet")
+
+	hit.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(60, 0, 0) })
+	assert(Void.Capture.Owner ~= nil, "dragging a slider should take the capture")
+
+	-- the page, the rail and every console view stop scrolling
+	assert(page.ScrollingEnabled == false, "the page must not scroll mid-drag")
+	assert(body:FindFirstChild("Rail").ScrollingEnabled == false, "the rail must not scroll mid-drag")
+
+	-- and a row the cursor wanders over stays where it was
+	bystander.MouseEnter:Fire()
+	assert(marker.BackgroundTransparency == 1, "a row lit up during a drag")
+	assert(bystander.BackgroundColor3 == Void.Ink.Card, "a row tinted during a drag")
+
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(90, 0, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+
+	assert(Void.Capture.Owner == nil, "letting go should release the capture")
+	assert(page.ScrollingEnabled == true, "the page should scroll again afterwards")
+
+	-- and hover works again
+	bystander.MouseEnter:Fire()
+	assert(marker.BackgroundTransparency == 0, "hover should work once the drag is over")
+	bystander.MouseLeave:Fire()
+
+	-- dragging the window does the same, so a page cannot scroll under it
+	bar.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(10, 10, 0) })
+	assert(page.ScrollingEnabled == false, "dragging the window must freeze scrolling too")
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(page.ScrollingEnabled == true, "and let it go again")
+end
+
+--------------------------------------------------------------------
+-- the watermark clears Roblox's top bar, and moves
+--------------------------------------------------------------------
+do
+	local stamp = Window.Watermark.Instance
+	local inset = game:GetService("GuiService").TopbarInset
+
+	assert(inset.Max.Y > 0, "the mock should report a top bar inset")
+	assert(stamp.Position.Y.Offset >= inset.Max.Y,
+		"the watermark sits under Roblox's top bar: " .. stamp.Position.Y.Offset
+			.. " vs " .. inset.Max.Y)
+	assert(Window.Fob.Position.Y.Offset >= inset.Max.Y, "so does the fob")
+
+	-- it drags, and it stays on screen
+	local from = stamp.Position.X.Offset
+	stamp.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(100, 100, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(190, 160, 0) })
+	assert(stamp.Position.X.Offset == from + 90, "the watermark did not drag")
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+
+	stamp.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(100, 100, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(-9000, -9000, 0) })
+	assert(stamp.Position.X.Offset >= 0 and stamp.Position.Y.Offset >= 0,
+		"the watermark should stay on screen")
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+
+	Window.Watermark.SetText("moved")
+	assert(stamp:FindFirstChild("Text").Text == "moved", "SetText failed")
+	Window.Watermark.Reset()
+	assert(stamp.Position.Y.Offset >= inset.Max.Y, "Reset should park it below the top bar again")
+
+	-- the fob toggles on a tap, but not at the end of a drag
+	local wasOpen = Window.Open
+	Window.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(Window.Open ~= wasOpen, "tapping the fob should toggle the window")
+	Window:SetOpen(wasOpen)
+
+	Window.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(120, 160, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(Window.Open == wasOpen, "dragging the fob must not toggle the window")
 end
 
 --------------------------------------------------------------------
