@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Runs the LoveUI smoke suite against the mock Roblox environment.
+# Runs the FreakyUI smoke suite against the mock Roblox environment.
 #
-#   tests/love.sh
+#   tests/freaky.sh
 #
-# Same harness as run.sh, pointed at LoveUI.lua instead of Ui.lua.
+# Same harness as run.sh, pointed at FreakyUI.lua instead of Ui.lua.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,11 +30,11 @@ trap 'rm -rf "$out"' EXIT
 	sed '$ d' "$root/tests/mock.lua" | sed 's/^return M$//'
 	echo "MOCK = M"
 	echo
-	echo "function LoadLove()"
-	cat "$root/LoveUI.lua"
+	echo "function LoadFreaky()"
+	cat "$root/FreakyUI.lua"
 	echo "end"
 	echo
-	cat "$root/tests/love-spec.lua"
+	cat "$root/tests/freaky-spec.lua"
 } > "$out/run.lua"
 
 "$luau_bin" "$out/run.lua"

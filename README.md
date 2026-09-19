@@ -39,9 +39,11 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/e
 
 ### Also in this repository
 
-**[LoveUI](LoveUI.md)** — a separate library, not a theme for this one: a pink
-sidebar that slides in from the left edge, with six pink palettes you can swap
-at runtime. Smaller surface, edge access only.
+**[FreakyUI](FreakyUI.md)** — a separate library, not a theme for this one: a
+loud sidebar that slides in from the left edge and widens when you keep
+pulling, with eight two-accent palettes, gradients on anything that holds
+state, and a lot more movement than this one. Edge access only. (It was called
+LoveUI until the rebrand.)
 
 ---
 
@@ -963,8 +965,8 @@ these are required — it degrades to `PlayerGui` in a plain LocalScript.
 | --- | --- |
 | `Ui.lua` | The library. This is the file you `loadstring`. |
 | `example.lua` | Feature demo covering every element. |
-| `LoveUI.lua` | The pink sidebar library, documented in `LoveUI.md`. |
-| `LoveUI-example.lua` | Feature demo for LoveUI. |
+| `FreakyUI.lua` | The sidebar library, documented in `FreakyUI.md`. |
+| `FreakyUI-example.lua` | Feature demo for FreakyUI. |
 | `tests/` | Mock Roblox environment and the test suites. |
 
 ## Development
@@ -976,6 +978,6 @@ trips and teardown. It needs the `luau` CLI and downloads one into
 `tests/.bin` if there is not one on `PATH`.
 
 ```sh
-tests/run.sh      # Onyx
-tests/love.sh     # LoveUI
+tests/run.sh       # Onyx
+tests/freaky.sh    # FreakyUI
 ```

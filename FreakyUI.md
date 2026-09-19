@@ -1,12 +1,18 @@
-# LoveUI
+# FreakyUI
 
-A pink sidebar interface library for Roblox script executors. Single file, no
+A loud sidebar interface library for Roblox script executors. Single file, no
 dependencies, loaded with `loadstring`.
 
-```lua
-local Love = loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/LoveUI.lua"))()
+> Formerly **LoveUI**, which was pink and polite. Same sidebar, new everything
+> else: eight palettes built on a pair of accents, gradients on anything that
+> holds state, and a lot more movement. The old `LoveUI.lua` URL is gone —
+> point your scripts at `FreakyUI.lua`, and rename `Love` to `Freaky` if you
+> called it that.
 
-local Window = Love:CreateWindow({ Title = "My Script", SubTitle = "v1.0", Theme = "Rose" })
+```lua
+local Freaky = loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/FreakyUI.lua"))()
+
+local Window = Freaky:CreateWindow({ Title = "My Script", SubTitle = "v1.0", Theme = "Freak" })
 local Tab    = Window:CreateTab("Main")
 local Group  = Tab:CreateSection("Combat")
 
@@ -16,10 +22,10 @@ Group:Toggle({ Title = "Aimbot", Flag = "Aimbot", Callback = print })
 Run the demo:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/LoveUI-example.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/FreakyUI-example.lua"))()
 ```
 
-LoveUI is separate from [Onyx](README.md) — a different library in the same
+FreakyUI is separate from [Onyx](README.md) — a different library in the same
 repository, not a theme for it. Load whichever you want; they do not share code
 or state.
 
@@ -29,7 +35,7 @@ or state.
 
 It is a sidebar, not a floating panel. The window lives off the left edge of
 the screen and slides in, so it never sits over the middle of the game. There
-is no topbar icon and no draggable frame: a translucent pink handle rides the
+is no topbar icon and no draggable frame: a translucent handle rides the
 panel's right edge, moving with it, so the same handle opens it and closes it.
 
 - **Drag the handle right** to open, **left** to close. Past the threshold it
@@ -54,38 +60,44 @@ push can take a while to reach you:
 
 ```lua
 -- always fetch the newest main
-local url = "https://raw.githubusercontent.com/iamdookie1/Ui2/main/LoveUI.lua?v=" .. tostring(tick())
-local Love = loadstring(game:HttpGet(url))()
+local url = "https://raw.githubusercontent.com/iamdookie1/Ui2/main/FreakyUI.lua?v=" .. tostring(tick())
+local Freaky = loadstring(game:HttpGet(url))()
 ```
 
-`print(Love.Version)` tells you which build you actually loaded.
+`print(Freaky.Version)` tells you which build you actually loaded.
 
 ---
 
 ## Themes
 
-Six palettes, all of them pink somewhere — that is the whole premise of the
-library. They differ in how loud the pink is and what it sits on.
+Eight palettes. Each one carries **two** accents: `Accent` marks state, and
+`Accent2` is where it goes when that state runs as a gradient — a slider fill,
+an active tab, the handle, the panel's own border, the letters of the title.
+That pair is what stops the interface reading as a spreadsheet with the lights
+off.
 
 | Name | Look |
 | --- | --- |
-| `Rose` | dark neutral, muted rose accent (default) |
-| `Bubblegum` | dark violet-black, neon pink |
-| `Wine` | deep maroon panels, warm pink |
-| `Midnight` | near-black, hot magenta |
-| `Blush` | light, dusty rose on off-white |
-| `Sakura` | light, soft petal pink |
+| `Freak` | acid magenta into violet, near-black (default) |
+| `Venom` | toxic lime into deep teal |
+| `Cyber` | arcade cyan into electric blue |
+| `Inferno` | ember orange into blood red |
+| `Vapor` | vaporwave pink into aqua, over indigo |
+| `Bubblegum` | hot pink into orange — the one that survived the rebrand |
+| `Void` | white on black, no colour at all |
+| `Sorbet` | the light one: coral into violet on paper |
 
 ```lua
-Love:SetTheme("Midnight")   -- switch
-Love:NextTheme()            -- cycle to the next one, returns its name
-Love.ThemeName              -- current name
-Love.ThemeOrder             -- { "Rose", "Bubblegum", ... }
-Love.Themes.Rose.Accent     -- read any colour
+Freaky:SetTheme("Venom")    -- switch
+Freaky:NextTheme()          -- cycle to the next one, returns its name
+Freaky.ThemeName            -- current name
+Freaky.ThemeOrder           -- { "Freak", "Venom", ... }
+Freaky.Themes.Cyber.Accent  -- read any colour
 ```
 
-Switching repaints everything that is already on screen — the library records
-every painted property against the theme token it came from, so live elements
+Switching repaints everything on screen — painted properties *and* gradients.
+The library records every painted property against the theme token it came
+from, and every gradient against the pair it was built from, so live elements
 change with it.
 
 ### Pickers stay in step
@@ -94,7 +106,7 @@ The swatch in the window header opens a list of every palette, with the
 current one highlighted. A `ThemeDropdown` on a page does the same job.
 
 Changing the theme **any** way — the header swatch, a `ThemeDropdown`,
-`Love:SetTheme`, `Love:NextTheme` — moves every other picker with it. No
+`Freaky:SetTheme`, `Freaky:NextTheme` — moves every other picker with it. No
 picker can sit there naming a palette you are no longer using.
 
 ```lua
@@ -102,18 +114,23 @@ Group:ThemeDropdown({ Title = "Theme" })    -- a dropdown wired to the library
 ```
 
 Each palette defines: `Bg`, `Panel`, `Card`, `Hover`, `Line`, `Text`, `Sub`,
-`Muted`, `Accent`, `OnAccent`, `Error`.
+`Muted`, `Accent`, `Accent2`, `OnAccent`, `Error`.
+
+The test suite holds every palette to it: all twelve tokens present, the two
+accents far enough apart to read as a gradient, the accent saturated (except
+`Void`, which is deliberately colourless), and enough contrast between the
+text and both the background and the accent.
 
 ---
 
 ## Window
 
 ```lua
-local Window = Love:CreateWindow({
+local Window = Freaky:CreateWindow({
     Title        = "My Script",
     SubTitle     = "v1.0",
-    Theme        = "Rose",
-    Background   = "hearts",                  -- hearts · glow · plain
+    Theme        = "Freak",
+    Background   = "sparks",                  -- sparks · glow · plain
     Width        = 300,                       -- how far it slides in
     MaxWidth     = 620,                       -- how far it can be widened
     Height       = 0.74,                      -- fraction of the screen
@@ -135,7 +152,7 @@ local Window = Love:CreateWindow({
 | `Window:Expand()` / `Window:Collapse()` | jump to MaxWidth or back |
 | `Window:ToggleWidth()` | what the header chevrons do |
 | `Window:SetToggleKey(keycode)` | rebind |
-| `Window:Notify(cfg)` | same as `Love:Notify` |
+| `Window:Notify(cfg)` | same as `Freaky:Notify` |
 | `Window:Destroy()` | remove this window only |
 
 `Window.Open`, `Window.Tabs`, `Window.ActiveTab`, `Window.Width` and
@@ -158,15 +175,16 @@ few pixels snaps back rather than leaving a ragged edge.
 ### Backdrop
 
 The panel is not a flat fill. A wash of the accent runs down it, two soft
-glows sit in opposite corners, and a few hearts drift behind the content at
-the edge of visible. All of it is drawn from frames and gradients — no image
-assets to fail to load — and all of it is painted with theme tokens, so it
-follows a theme switch like everything else.
+glows sit in opposite corners (one per accent), and five sparks drift upward
+behind the content at the edge of visible, turning as they go. All of it is
+drawn from frames and gradients — no image assets to fail to load — and all of
+it is painted with theme tokens, so it follows a theme switch like everything
+else.
 
 ```lua
-Love:CreateWindow({ Background = "hearts" })   -- default
-Love:CreateWindow({ Background = "glow" })     -- wash and glows, no hearts
-Love:CreateWindow({ Background = "plain" })    -- flat, as it was
+Freaky:CreateWindow({ Background = "sparks" })   -- default
+Freaky:CreateWindow({ Background = "glow" })     -- wash and glows, no sparks
+Freaky:CreateWindow({ Background = "plain" })    -- flat
 ```
 
 ---
@@ -413,8 +431,8 @@ ping:Set("42ms")
 ## Notifications
 
 ```lua
-Love:Notify({ Title = "Done", Content = "Everything worked.", Duration = 4 })
-Love:Notify("short form")
+Freaky:Notify({ Title = "Done", Content = "Everything worked.", Duration = 4 })
+Freaky:Notify("short form")
 ```
 
 Toasts stack in the bottom-right corner, slide in, and remove themselves when
@@ -422,56 +440,64 @@ their duration is up.
 
 They are deliberately small — 176px wide, two lines of body text at most, and
 the stack caps at three, pushing the oldest out rather than climbing the
-screen. Change the cap with `Love.MaxToasts = 5`.
+screen. Change the cap with `Freaky.MaxToasts = 5`.
 
-Each one carries the accent: a wash across the card, a bar down the left edge,
-a beating heart, and a hairline underneath that drains for however long the
-toast is up, so it shows its own clock instead of vanishing out of nowhere.
+Each one carries the accent: a wash across the card, a gradient bar down the
+left edge, a spark that spins in as it lands, and a hairline underneath that
+drains for however long the toast is up, so it shows its own clock instead of
+vanishing out of nowhere.
 
 ---
 
 ## Movement
 
-Nothing in the library just appears. The pieces that move, and why:
+Nothing here just appears, and nothing is ever completely still.
 
 | What | Does |
 | --- | --- |
-| The sidebar | slides on a long quintic curve; the panel edge catches the accent as it lands |
-| The heart | beats when the sidebar opens, when the theme changes, and once in a while on its own |
-| The handle | breathes slowly while the sidebar is shut, so a strip of pink at the screen edge reads as something you can grab |
+| Gradients | the loud ones turn continuously — the handle, the panel border, the title, slider and progress fills, section ticks — all driven by one shared connection rather than a tween loop each |
+| The sidebar | slides on a long quintic curve, a bright line sweeps down the panel, and the border catches the accent as it lands |
+| The spark | pulses and spins a quarter turn when the sidebar opens, spins back when the theme changes, and flares on its own every few seconds |
+| The title | glitches sideways and snaps back when the palette changes |
+| The handle | breathes slowly while the sidebar is shut, so the strip at the screen edge reads as something you can grab |
 | Tab pages | cross-fade and slide — the outgoing page leaves the way it came in, the incoming one arrives from the other side |
+| Sections | are dealt in behind it, one after another |
+| Tab pills | pop on select, light up with the gradient, and ripple where you pressed |
+| Rows | grow an accent bar down the left edge on hover, and put a ring out from wherever you pressed |
 | Dropdowns | expand to a measured height, rows fading in one after another rather than a block appearing |
-| Toggles | overshoot slightly, so the switch has some weight |
+| Sliders | bloom a halo around the knob while you drag, and the readout grows with it |
+| Toggles | overshoot slightly, and the track only runs the gradient once it is lit |
 | Buttons | the chevron jumps forward and settles back, so a press that runs something silent still looks like it did something |
-| Toasts | slide in from the right, drain their timer line, and slide back out |
+| Backdrop sparks | drift upward and rotate, slowly enough that you only notice if you stop and look |
+| Toasts | slide in from the right, spin their spark, drain their timer line, and slide back out |
 
 ---
 
 ## Flags
 
-Any element with a `Flag` writes its value into `Love.Flags` and registers
-itself in `Love.Options`.
+Any element with a `Flag` writes its value into `Freaky.Flags` and registers
+itself in `Freaky.Options`.
 
 ```lua
-Love:GetFlag("AimFov")          -- read
-Love:SetFlag("AimFov", 200)     -- write, and update the element on screen
-Love.Flags.AimFov               -- the raw table
-Love.Options.AimFov:Set(200)    -- the element handle
+Freaky:GetFlag("AimFov")          -- read
+Freaky:SetFlag("AimFov", 200)     -- write, and update the element on screen
+Freaky.Flags.AimFov               -- the raw table
+Freaky.Options.AimFov:Set(200)    -- the element handle
 ```
 
-There is no config file support in LoveUI yet — flags are in-memory only.
+There is no config file support in FreakyUI yet — flags are in-memory only.
 
 ---
 
 ## Lifecycle
 
 ```lua
-Love:Unload()       -- destroys the interface and disconnects everything
-Love.Unloaded       -- true afterwards
+Freaky:Unload()       -- destroys the interface and disconnects everything
+Freaky.Unloaded       -- true afterwards
 Window:Destroy()    -- one window, leaving the library alive
 ```
 
-`Love:Connect(signal, fn)` registers a connection that `Unload` will clean up
+`Freaky:Connect(signal, fn)` registers a connection that `Unload` will clean up
 for you.
 
 ---
@@ -482,9 +508,11 @@ for you.
   `PlayerGui`, so the interface survives what the game does to its own UI.
 - Uses `cloneref` for service handles when available.
 - Falls back across fonts, so it still renders where Gotham is unavailable.
-- Icons are drawn from frames rather than font glyphs — the heart in the header
-  and the chevrons are built out of rotated shapes, which look the same
-  everywhere.
+- Icons are drawn from frames rather than font glyphs — the spark in the header
+  is four crossed bars, the chevrons are two rotated ones. No glyph coverage to
+  depend on, and no image assets to fail to load.
+- One `RenderStepped` connection drives every turning gradient, and it is
+  released on `Unload` with everything else.
 
 ---
 
@@ -492,19 +520,19 @@ for you.
 
 | Path | What |
 | --- | --- |
-| `LoveUI.lua` | the library |
-| `LoveUI-example.lua` | feature demo |
-| `LoveUI.md` | this file |
-| `tests/love-spec.lua` | behaviour suite |
-| `tests/love.sh` | runs it against the mock |
+| `FreakyUI.lua` | the library |
+| `FreakyUI-example.lua` | feature demo |
+| `FreakyUI.md` | this file |
+| `tests/freaky-spec.lua` | behaviour suite |
+| `tests/freaky.sh` | runs it against the mock |
 
 ---
 
 ## Development
 
 ```bash
-./tests/love.sh                 # behaviour suite
-./tests/lint.sh LoveUI.lua LoveUI-example.lua
+./tests/freaky.sh                 # behaviour suite
+./tests/lint.sh FreakyUI.lua FreakyUI-example.lua
 ```
 
 The suite runs the library against a mock Roblox API under the `luau` CLI —

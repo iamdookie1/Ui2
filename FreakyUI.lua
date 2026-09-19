@@ -1,17 +1,18 @@
 --!nonstrict
 --[[
 	================================================================
-	  LOVE UI  ·  v1.2.0
-	  A pink sidebar interface library for Roblox script executors.
+	  FREAKY UI  ·  v2.0.0
+	  A loud sidebar interface library for Roblox script executors.
+	  (Formerly LoveUI, which was pink and polite. This one is neither.)
 	================================================================
 
 	  Usage:
-	      local Love = loadstring(game:HttpGet("<raw url to LoveUI.lua>"))()
+	      local Freaky = loadstring(game:HttpGet("<raw url to FreakyUI.lua>"))()
 
-	      local Window = Love:CreateWindow({
+	      local Window = Freaky:CreateWindow({
 	          Title    = "My Script",
 	          SubTitle = "v1.0",
-	          Theme    = "Rose",
+	          Theme    = "Freak",
 	      })
 
 	      local Tab = Window:CreateTab("Main")
@@ -27,6 +28,11 @@
 	  Keep dragging right once it is open and the panel widens: it grows
 	  sideways rather than taller, so it never becomes a column down the
 	  middle of your screen. The chevrons in the header do the same thing.
+
+	  Every palette carries two accents. Anything holding state - a fill, a
+	  pill, the handle, the panel's own border, the title's letters - runs
+	  the pair as a gradient, and the loud ones turn slowly, so nothing on
+	  screen is ever completely still.
 	================================================================
 ]]
 
@@ -35,6 +41,7 @@ local CloneRef = (typeof(cloneref) == "function" and cloneref) or function(o) re
 local Players          = CloneRef(game:GetService("Players"))
 local TweenService     = CloneRef(game:GetService("TweenService"))
 local UserInputService  = CloneRef(game:GetService("UserInputService"))
+local RunService       = CloneRef(game:GetService("RunService"))
 local CoreGui          = CloneRef(game:GetService("CoreGui"))
 
 local LocalPlayer = Players.LocalPlayer
@@ -43,9 +50,9 @@ local LocalPlayer = Players.LocalPlayer
 --  LIBRARY
 -- ================================================================
 
-local Love = {
-	Name        = "LoveUI",
-	Version     = "1.2.0",
+local Freaky = {
+	Name        = "FreakyUI",
+	Version     = "2.0.0",
 
 	Windows     = {},
 	Flags       = {},
@@ -58,70 +65,98 @@ local Love = {
 --  THEMES
 -- ================================================================
 --
---  Every theme carries pink somewhere, because that is the point of the
---  library. They differ in how loud it is and what it sits on: Rose and
---  Wine are muted and dark, Bubblegum and Midnight are neon, Blush and
---  Sakura are light.
+--  Every palette carries two accents, not one. Accent is the colour that
+--  marks state; Accent2 is where it goes when it runs as a gradient - a
+--  fill, a pill, the handle. That pair is what stops a flat interface
+--  looking like a spreadsheet with the lights off.
+--
+--  They are loud on purpose. Void is the one that is not.
 
 local Themes = {
-	Rose = {
-		Bg = Color3.fromRGB(18, 16, 19),   Panel = Color3.fromRGB(24, 21, 26),
-		Card = Color3.fromRGB(32, 28, 35), Hover = Color3.fromRGB(42, 37, 46),
-		Line = Color3.fromRGB(48, 42, 52), Text = Color3.fromRGB(245, 240, 245),
-		Sub = Color3.fromRGB(178, 166, 180), Muted = Color3.fromRGB(128, 118, 132),
-		Accent = Color3.fromRGB(244, 114, 182), OnAccent = Color3.fromRGB(26, 10, 20),
-		Error = Color3.fromRGB(255, 107, 107),
+	-- acid magenta bleeding into violet: the house palette
+	Freak = {
+		Bg = Color3.fromRGB(12, 10, 18),   Panel = Color3.fromRGB(18, 15, 27),
+		Card = Color3.fromRGB(28, 23, 42), Hover = Color3.fromRGB(40, 32, 59),
+		Line = Color3.fromRGB(54, 43, 78), Text = Color3.fromRGB(246, 242, 255),
+		Sub = Color3.fromRGB(184, 172, 214), Muted = Color3.fromRGB(128, 116, 160),
+		Accent = Color3.fromRGB(255, 46, 172), Accent2 = Color3.fromRGB(132, 74, 255),
+		OnAccent = Color3.fromRGB(14, 4, 20), Error = Color3.fromRGB(255, 84, 84),
 	},
+	-- toxic lime into deep teal
+	Venom = {
+		Bg = Color3.fromRGB(8, 14, 11),    Panel = Color3.fromRGB(13, 22, 17),
+		Card = Color3.fromRGB(20, 33, 26), Hover = Color3.fromRGB(29, 47, 37),
+		Line = Color3.fromRGB(38, 62, 48), Text = Color3.fromRGB(238, 253, 244),
+		Sub = Color3.fromRGB(164, 202, 180), Muted = Color3.fromRGB(110, 146, 126),
+		Accent = Color3.fromRGB(148, 255, 80), Accent2 = Color3.fromRGB(0, 214, 170),
+		OnAccent = Color3.fromRGB(6, 20, 12), Error = Color3.fromRGB(255, 96, 96),
+	},
+	-- arcade cyan into electric blue
+	Cyber = {
+		Bg = Color3.fromRGB(7, 11, 20),    Panel = Color3.fromRGB(11, 17, 31),
+		Card = Color3.fromRGB(17, 26, 46), Hover = Color3.fromRGB(25, 38, 66),
+		Line = Color3.fromRGB(33, 51, 87), Text = Color3.fromRGB(236, 247, 255),
+		Sub = Color3.fromRGB(160, 189, 220), Muted = Color3.fromRGB(105, 133, 168),
+		Accent = Color3.fromRGB(0, 234, 255), Accent2 = Color3.fromRGB(88, 101, 255),
+		OnAccent = Color3.fromRGB(4, 12, 24), Error = Color3.fromRGB(255, 92, 122),
+	},
+	-- ember orange into blood red
+	Inferno = {
+		Bg = Color3.fromRGB(17, 11, 9),    Panel = Color3.fromRGB(26, 16, 13),
+		Card = Color3.fromRGB(38, 23, 18), Hover = Color3.fromRGB(54, 32, 24),
+		Line = Color3.fromRGB(70, 41, 31), Text = Color3.fromRGB(255, 244, 236),
+		Sub = Color3.fromRGB(212, 180, 162), Muted = Color3.fromRGB(156, 126, 110),
+		Accent = Color3.fromRGB(255, 138, 30), Accent2 = Color3.fromRGB(240, 40, 62),
+		OnAccent = Color3.fromRGB(24, 8, 4), Error = Color3.fromRGB(255, 72, 72),
+	},
+	-- vaporwave: pink into aqua over indigo
+	Vapor = {
+		Bg = Color3.fromRGB(15, 11, 28),   Panel = Color3.fromRGB(22, 17, 41),
+		Card = Color3.fromRGB(33, 25, 58), Hover = Color3.fromRGB(47, 36, 80),
+		Line = Color3.fromRGB(62, 47, 104), Text = Color3.fromRGB(244, 238, 255),
+		Sub = Color3.fromRGB(188, 172, 224), Muted = Color3.fromRGB(134, 118, 174),
+		Accent = Color3.fromRGB(255, 108, 216), Accent2 = Color3.fromRGB(94, 231, 255),
+		OnAccent = Color3.fromRGB(18, 6, 30), Error = Color3.fromRGB(255, 94, 110),
+	},
+	-- the one that survived the rebrand
 	Bubblegum = {
 		Bg = Color3.fromRGB(14, 12, 16),   Panel = Color3.fromRGB(22, 18, 26),
 		Card = Color3.fromRGB(33, 26, 40), Hover = Color3.fromRGB(45, 35, 54),
 		Line = Color3.fromRGB(56, 44, 66), Text = Color3.fromRGB(250, 245, 252),
 		Sub = Color3.fromRGB(190, 175, 200), Muted = Color3.fromRGB(138, 125, 150),
-		Accent = Color3.fromRGB(255, 77, 166), OnAccent = Color3.fromRGB(20, 5, 14),
-		Error = Color3.fromRGB(255, 92, 92),
+		Accent = Color3.fromRGB(255, 77, 166), Accent2 = Color3.fromRGB(255, 154, 92),
+		OnAccent = Color3.fromRGB(20, 5, 14), Error = Color3.fromRGB(255, 92, 92),
 	},
-	Wine = {
-		Bg = Color3.fromRGB(26, 12, 18),   Panel = Color3.fromRGB(36, 16, 25),
-		Card = Color3.fromRGB(48, 22, 34), Hover = Color3.fromRGB(62, 29, 44),
-		Line = Color3.fromRGB(72, 34, 50), Text = Color3.fromRGB(248, 236, 242),
-		Sub = Color3.fromRGB(196, 160, 176), Muted = Color3.fromRGB(146, 112, 128),
-		Accent = Color3.fromRGB(236, 110, 158), OnAccent = Color3.fromRGB(30, 8, 16),
-		Error = Color3.fromRGB(255, 124, 112),
+	-- for when the rest is too much
+	Void = {
+		Bg = Color3.fromRGB(8, 8, 9),      Panel = Color3.fromRGB(14, 14, 16),
+		Card = Color3.fromRGB(22, 22, 25), Hover = Color3.fromRGB(32, 32, 36),
+		Line = Color3.fromRGB(44, 44, 49), Text = Color3.fromRGB(245, 245, 247),
+		Sub = Color3.fromRGB(168, 168, 176), Muted = Color3.fromRGB(116, 116, 124),
+		Accent = Color3.fromRGB(255, 255, 255), Accent2 = Color3.fromRGB(150, 150, 160),
+		OnAccent = Color3.fromRGB(10, 10, 12), Error = Color3.fromRGB(255, 96, 96),
 	},
-	Midnight = {
-		Bg = Color3.fromRGB(10, 10, 14),   Panel = Color3.fromRGB(16, 16, 22),
-		Card = Color3.fromRGB(24, 24, 32), Hover = Color3.fromRGB(34, 34, 44),
-		Line = Color3.fromRGB(40, 40, 52), Text = Color3.fromRGB(240, 238, 245),
-		Sub = Color3.fromRGB(164, 160, 176), Muted = Color3.fromRGB(118, 114, 130),
-		Accent = Color3.fromRGB(255, 64, 152), OnAccent = Color3.fromRGB(12, 4, 10),
-		Error = Color3.fromRGB(255, 88, 88),
-	},
-	Blush = {
-		Bg = Color3.fromRGB(250, 244, 247), Panel = Color3.fromRGB(255, 251, 253),
-		Card = Color3.fromRGB(248, 238, 243), Hover = Color3.fromRGB(243, 228, 236),
-		Line = Color3.fromRGB(231, 213, 224), Text = Color3.fromRGB(45, 32, 40),
-		Sub = Color3.fromRGB(110, 92, 104), Muted = Color3.fromRGB(150, 132, 144),
-		Accent = Color3.fromRGB(219, 90, 146), OnAccent = Color3.fromRGB(255, 252, 254),
-		Error = Color3.fromRGB(198, 42, 52),
-	},
-	Sakura = {
-		Bg = Color3.fromRGB(253, 247, 250), Panel = Color3.fromRGB(255, 253, 254),
-		Card = Color3.fromRGB(252, 240, 246), Hover = Color3.fromRGB(247, 230, 239),
-		Line = Color3.fromRGB(240, 220, 232), Text = Color3.fromRGB(60, 44, 54),
-		Sub = Color3.fromRGB(124, 104, 116), Muted = Color3.fromRGB(164, 144, 156),
-		Accent = Color3.fromRGB(240, 148, 184), OnAccent = Color3.fromRGB(58, 28, 42),
-		Error = Color3.fromRGB(206, 50, 60),
+	-- the light one: coral into violet on paper
+	Sorbet = {
+		Bg = Color3.fromRGB(250, 246, 250), Panel = Color3.fromRGB(255, 253, 255),
+		Card = Color3.fromRGB(246, 240, 248), Hover = Color3.fromRGB(238, 229, 244),
+		Line = Color3.fromRGB(226, 214, 236), Text = Color3.fromRGB(38, 30, 46),
+		Sub = Color3.fromRGB(104, 90, 120), Muted = Color3.fromRGB(146, 132, 162),
+		Accent = Color3.fromRGB(236, 72, 132), Accent2 = Color3.fromRGB(124, 82, 240),
+		OnAccent = Color3.fromRGB(255, 252, 255), Error = Color3.fromRGB(200, 40, 56),
 	},
 }
 
-local THEME_ORDER = { "Rose", "Bubblegum", "Wine", "Midnight", "Blush", "Sakura" }
+local THEME_ORDER = {
+	"Freak", "Venom", "Cyber", "Inferno", "Vapor", "Bubblegum", "Void", "Sorbet",
+}
 
-Love.Themes = Themes
-Love.ThemeOrder = THEME_ORDER
-Love.ThemeName = "Rose"
+Freaky.Themes = Themes
+Freaky.ThemeOrder = THEME_ORDER
+Freaky.ThemeName = "Freak"
 
 local Theme = {}
-for token, colour in pairs(Themes.Rose) do Theme[token] = colour end
+for token, colour in pairs(Themes.Freak) do Theme[token] = colour end
 
 -- every painted property, so switching theme repaints the whole interface
 local Painted = {}
@@ -254,9 +289,9 @@ local function IsClick(input)
 		or input.UserInputType == Enum.UserInputType.Touch
 end
 
-function Love:Connect(signal, fn)
+function Freaky:Connect(signal, fn)
 	local conn = signal:Connect(fn)
-	table.insert(Love.Connections, conn)
+	table.insert(Freaky.Connections, conn)
 	return conn
 end
 
@@ -265,51 +300,203 @@ local function Fire(callback, ...)
 	local args = table.pack(...)
 	task.spawn(function()
 		local ok, err = pcall(callback, table.unpack(args, 1, args.n))
-		if not ok then warn("[LoveUI] callback error: " .. tostring(err)) end
+		if not ok then warn("[FreakyUI] callback error: " .. tostring(err)) end
 	end)
 end
 
--- A heart, drawn from two rounded squares and a rotated one. Roblox's fonts
--- have no dependable heart glyph, so it is built rather than typed.
-local function Heart(parent, size, zIndex)
+-- ================================================================
+--  GRADIENTS AND EFFECTS
+-- ================================================================
+--
+--  Accent and Accent2 are a pair. Anything that carries state - a fill, a
+--  pill, the handle, the panel's own border - gets both of them as a
+--  gradient instead of one flat colour, and the loud ones turn slowly so
+--  the interface is never completely still.
+
+local Gradients = {}
+
+local function Sheen(parent, rotation, tokenA, tokenB)
+	local a, b = tokenA or "Accent", tokenB or "Accent2"
+	local gradient = New("UIGradient", {
+		Color = ColorSequence.new(Theme[a], Theme[b]),
+		Rotation = rotation or 0, Parent = parent,
+	})
+	table.insert(Gradients, { Instance = gradient, A = a, B = b })
+	return gradient
+end
+
+local function RepaintGradients()
+	for i = #Gradients, 1, -1 do
+		local entry = Gradients[i]
+		if entry.Instance and entry.Instance.Parent then
+			entry.Instance.Color = ColorSequence.new(Theme[entry.A], Theme[entry.B])
+		else
+			table.remove(Gradients, i)
+		end
+	end
+end
+
+-- Turning gradients are driven by one connection rather than a looping
+-- tween each: a dozen property writes a frame costs nothing, a dozen
+-- looping tweens costs a scheduler entry apiece.
+local Drifting = {}
+local driftClock = 0
+
+local function Drift(gradient, degreesPerSecond, phase)
+	table.insert(Drifting, {
+		Instance = gradient, Speed = degreesPerSecond or 20, Phase = phase or 0,
+	})
+	return gradient
+end
+
+Freaky:Connect(RunService.RenderStepped, function(delta)
+	driftClock = driftClock + (tonumber(delta) or 0)
+	for i = #Drifting, 1, -1 do
+		local entry = Drifting[i]
+		if entry.Instance and entry.Instance.Parent then
+			entry.Instance.Rotation = (entry.Phase + driftClock * entry.Speed) % 360
+		else
+			table.remove(Drifting, i)
+		end
+	end
+end)
+
+-- A ring that grows out of wherever you pressed and fades. It is the
+-- cheapest way to make a flat row feel like it acknowledged you.
+local function Ripple(button, zIndex)
+	button.ClipsDescendants = true
+	button.InputBegan:Connect(function(input)
+		if not IsClick(input) then return end
+
+		local width = button.AbsoluteSize.X
+		if width <= 0 then width = 200 end
+		local reach = width * 2
+
+		local x = 0.5
+		if width > 0 and input.Position then
+			x = Clamp((input.Position.X - button.AbsolutePosition.X) / width, 0, 1)
+		end
+
+		local ring = New("Frame", {
+			Name = "Ripple", BorderSizePixel = 0, BackgroundTransparency = 0.72,
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(x, 0.5),
+			Size = UDim2.fromOffset(0, 0), ZIndex = (zIndex or 8) - 1, Parent = button,
+		})
+		Corner(999, ring)
+		Paint(ring, "BackgroundColor3", "Accent")
+
+		Tween(ring, {
+			Size = UDim2.fromOffset(reach, reach), BackgroundTransparency = 1,
+		}, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out))
+		task.delay(0.5, function() if ring.Parent then ring:Destroy() end end)
+	end)
+end
+
+-- A bar down the left edge of a row that grows on hover. Rows live in a
+-- list layout, so they cannot move; this gives them somewhere to go.
+local function EdgeBar(row, zIndex)
+	local bar = New("Frame", {
+		Name = "Edge", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(0, 3, 0, 0),
+		ZIndex = zIndex or 8, Parent = row,
+	})
+	Paint(bar, "BackgroundColor3", "Accent")
+	Sheen(bar, 90)
+
+	row.MouseEnter:Connect(function()
+		Tween(bar, { Size = UDim2.new(0, 3, 0.62, 0) }, EASE_POP)
+	end)
+	row.MouseLeave:Connect(function()
+		Tween(bar, { Size = UDim2.new(0, 3, 0, 0) }, EASE_OUT)
+	end)
+	return bar
+end
+
+-- One bright line that sweeps down the panel when it opens. It is pure
+-- decoration and it is the first thing anybody notices.
+local function Sweep(parent, zIndex)
+	local line = New("Frame", {
+		Name = "Sweep", BorderSizePixel = 0, BackgroundTransparency = 0.25,
+		Position = UDim2.fromScale(0, -0.02), Size = UDim2.new(1, 0, 0, 2),
+		ZIndex = zIndex or 30, Parent = parent,
+	})
+	Paint(line, "BackgroundColor3", "Accent")
+	Sheen(line, 0)
+	Fade(line, { { 0, 1 }, { 0.5, 0 }, { 1, 1 } }, 0)
+
+	Tween(line, { Position = UDim2.fromScale(0, 1.02), BackgroundTransparency = 1 },
+		TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out))
+	task.delay(0.6, function() if line.Parent then line:Destroy() end end)
+	return line
+end
+
+-- Text that jolts sideways and snaps back, once. Used sparingly - the
+-- window title, when the theme changes - because a permanent twitch is
+-- unreadable rather than cool.
+local function Glitch(label, distance)
+	if not label or not label.Parent then return end
+	local home = label.Position
+	local shove = distance or 3
+
+	local function hop(offset, info)
+		Tween(label, {
+			Position = home + UDim2.fromOffset(offset, 0),
+		}, info or EASE_BEAT)
+	end
+
+	hop(shove)
+	task.delay(0.06, function()
+		if not label.Parent then return end
+		hop(-shove)
+		task.delay(0.06, function()
+			if not label.Parent then return end
+			Tween(label, { Position = home }, EASE_POP)
+		end)
+	end)
+end
+
+-- The mark: a four-blade spark, built from crossed rounded bars rather than
+-- a font glyph so it looks the same on every device. The straight blades
+-- take the accent, the diagonal ones take the second accent, so the brand
+-- mark carries the whole palette rather than one colour of it.
+local function Spark(parent, size, zIndex)
 	local holder = New("Frame", {
-		Name = "Heart", BackgroundTransparency = 1,
+		Name = "Spark", BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromOffset(size, size), ZIndex = zIndex or 2, Parent = parent,
 	})
 
 	local parts = {}
-	local lobe = math.floor(size * 0.52)
+	local thin = math.max(2, math.floor(size * 0.2))
 
-	for i = 1, 2 do
-		local bump = New("Frame", {
+	local function blade(w, h, rotation, token)
+		local bar = New("Frame", {
 			BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(i == 1 and 0.31 or 0.69, 0.36),
-			Size = UDim2.fromOffset(lobe, lobe), ZIndex = zIndex or 2, Parent = holder,
+			Position = UDim2.fromScale(0.5, 0.5), Rotation = rotation,
+			Size = UDim2.fromOffset(w, h), ZIndex = zIndex or 2, Parent = holder,
 		})
-		Corner(math.ceil(lobe / 2), bump)
-		Paint(bump, "BackgroundColor3", "Accent")
-		table.insert(parts, bump)
+		Corner(math.floor(math.min(w, h) / 2), bar)
+		Paint(bar, "BackgroundColor3", token)
+		table.insert(parts, bar)
+		return bar
 	end
 
-	local body = New("Frame", {
-		BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Rotation = 45,
-		Position = UDim2.fromScale(0.5, 0.52),
-		Size = UDim2.fromOffset(math.floor(size * 0.62), math.floor(size * 0.62)),
-		ZIndex = zIndex or 2, Parent = holder,
-	})
-	Corner(2, body)
-	Paint(body, "BackgroundColor3", "Accent")
-	table.insert(parts, body)
+	blade(thin, size, 0, "Accent")
+	blade(size, thin, 0, "Accent")
+	local diagonal = math.floor(size * 0.66)
+	blade(math.max(2, math.floor(thin * 0.8)), diagonal, 45, "Accent2")
+	blade(diagonal, math.max(2, math.floor(thin * 0.8)), 45, "Accent2")
 
-	-- a UIScale so the whole heart can beat without touching the lobes,
-	-- which are sized in offsets and would not follow the holder
+	-- a UIScale so the mark can pulse without touching the blades, which
+	-- are sized in offsets and would not follow the holder
 	local scale = New("UIScale", { Scale = 1, Parent = holder })
+	local spin = 0
 
-	local heart
-	heart = {
+	local spark
+	spark = {
 		Instance = holder,
 		Scale = scale,
+		Parts = parts,
 		SetColour = function(colour, info)
 			for _, part in ipairs(parts) do
 				Tween(part, { BackgroundColor3 = colour }, info or EASE_SNAP)
@@ -318,24 +505,23 @@ local function Heart(parent, size, zIndex)
 		SetTransparency = function(alpha)
 			for _, part in ipairs(parts) do part.BackgroundTransparency = alpha end
 		end,
-		-- two quick squeezes, like a heartbeat rather than a single pop
-		Beat = function(strength)
-			local peak = 1 + (strength or 0.18)
+		-- a quick flare out and back: the mark's whole vocabulary
+		Pulse = function(strength)
+			local peak = 1 + (strength or 0.25)
 			Tween(scale, { Scale = peak }, EASE_BEAT)
 			task.delay(0.16, function()
 				if not holder.Parent then return end
-				Tween(scale, { Scale = 1 }, EASE_BEAT)
-				task.delay(0.14, function()
-					if not holder.Parent then return end
-					Tween(scale, { Scale = 1 + (strength or 0.18) * 0.6 }, EASE_BEAT)
-					task.delay(0.14, function()
-						if holder.Parent then Tween(scale, { Scale = 1 }, EASE_OUT) end
-					end)
-				end)
+				Tween(scale, { Scale = 1 }, EASE_POP)
 			end)
 		end,
+		-- a quarter turn per call, so repeated events wind it round instead
+		-- of snapping it back to where it started
+		Spin = function(turns, info)
+			spin = spin + (turns or 1) * 90
+			Tween(holder, { Rotation = spin }, info or EASE_SMOOTH)
+		end,
 	}
-	return heart
+	return spark
 end
 
 -- A chevron from two bars, for the same reason the heart is drawn.
@@ -399,7 +585,7 @@ local function GuiParent()
 end
 
 local Root = New("ScreenGui", {
-	Name = "LoveUI_" .. tostring(math.random(1e5, 1e6 - 1)),
+	Name = "FreakyUI_" .. tostring(math.random(1e5, 1e6 - 1)),
 	ResetOnSpawn = false, IgnoreGuiInset = true,
 	DisplayOrder = 9998, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 })
@@ -413,7 +599,7 @@ pcall(function()
 end)
 
 Root.Parent = GuiParent()
-Love.Root = Root
+Freaky.Root = Root
 
 local ToastLayer = New("Frame", {
 	Name = "Toasts", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
@@ -432,7 +618,7 @@ local ThemePickers = {}
 
 local function RegisterThemePicker(entry)
 	table.insert(ThemePickers, entry)
-	entry.Show(Love.ThemeName)
+	entry.Show(Freaky.ThemeName)
 	return entry
 end
 
@@ -447,16 +633,17 @@ local function SyncThemePickers(name)
 	end
 end
 
-function Love.SetTheme(a, b)
+function Freaky.SetTheme(a, b)
 	local name = b
-	if a ~= Love then name = a end
-	name = tostring(name or "Rose")
+	if a ~= Freaky then name = a end
+	name = tostring(name or "Freak")
 
 	local palette = Themes[name]
 	if not palette then return false, "no theme named \"" .. name .. "\"" end
 
 	for token, colour in pairs(palette) do Theme[token] = colour end
-	Love.ThemeName = name
+	Freaky.ThemeName = name
+	RepaintGradients()
 
 	-- repaint everything that was bound to a token, dropping anything gone
 	for i = #Painted, 1, -1 do
@@ -470,20 +657,20 @@ function Love.SetTheme(a, b)
 
 	SyncThemePickers(name)
 
-	for _, window in ipairs(Love.Windows) do
+	for _, window in ipairs(Freaky.Windows) do
 		if window.Flash then window.Flash() end
 		if window.OnTheme then Fire(window.OnTheme, name) end
 	end
 	return true
 end
 
-function Love.NextTheme()
+function Freaky.NextTheme()
 	local index = 1
 	for i, name in ipairs(THEME_ORDER) do
-		if name == Love.ThemeName then index = i; break end
+		if name == Freaky.ThemeName then index = i; break end
 	end
 	local nextName = THEME_ORDER[(index % #THEME_ORDER) + 1]
-	Love.SetTheme(Love, nextName)
+	Freaky.SetTheme(Freaky, nextName)
 	return nextName
 end
 
@@ -495,7 +682,7 @@ end
 -- you are trying to see past, so the stack is capped rather than allowed to
 -- climb the screen.
 local TOAST_WIDTH = 176
-Love.MaxToasts = 3
+Freaky.MaxToasts = 3
 
 local ToastStack = New("Frame", {
 	Name = "Stack", BackgroundTransparency = 1,
@@ -513,9 +700,9 @@ local ToastStack = New("Frame", {
 local toastOrder = 0
 local liveToasts = {}
 
-function Love.Notify(a, b)
+function Freaky.Notify(a, b)
 	local cfg = b
-	if a ~= Love then cfg = a end
+	if a ~= Freaky then cfg = a end
 	if typeof(cfg) == "string" then cfg = { Title = cfg } end
 	cfg = cfg or {}
 
@@ -523,7 +710,7 @@ function Love.Notify(a, b)
 	toastOrder = toastOrder + 1
 
 	-- push the oldest out rather than letting the stack grow upwards
-	local limit = math.max(1, tonumber(Love.MaxToasts) or 3)
+	local limit = math.max(1, tonumber(Freaky.MaxToasts) or 3)
 	while #liveToasts >= limit do
 		local oldest = table.remove(liveToasts, 1)
 		if oldest then oldest() end
@@ -557,22 +744,23 @@ function Love.Notify(a, b)
 
 	local edge = New("Frame", {
 		Name = "Edge", BorderSizePixel = 0, BackgroundTransparency = 1,
-		Size = UDim2.new(0, 2, 1, 0), ZIndex = 503, Parent = card,
+		Size = UDim2.new(0, 3, 1, 0), ZIndex = 503, Parent = card,
 	})
 	Paint(edge, "BackgroundColor3", "Accent")
+	Sheen(edge, 90)
 
 	Padding(card, 6, 7, 9, 8)
 	List(card, 2)
 
-	local heart = Heart(card, 9, 504)
-	heart.Instance.AnchorPoint = Vector2.new(0, 0)
-	heart.Instance.Position = UDim2.fromOffset(0, 1)
-	heart.Instance.LayoutOrder = 0
-	heart.SetTransparency(1)
+	local mark = Spark(card, 10, 504)
+	mark.Instance.AnchorPoint = Vector2.new(0, 0)
+	mark.Instance.Position = UDim2.fromOffset(0, 1)
+	mark.Instance.LayoutOrder = 0
+	mark.SetTransparency(1)
 
 	local titleLabel = Text({
 		Parent = card, ZIndex = 504, Font = FONT_SB, TextSize = 11.5, LayoutOrder = 1,
-		Text = tostring(cfg.Title or "LoveUI"), TextTransparency = 1,
+		Text = tostring(cfg.Title or "FreakyUI"), TextTransparency = 1,
 		TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 13),
 	})
 
@@ -613,10 +801,11 @@ function Love.Notify(a, b)
 	Tween(edge, { BackgroundTransparency = 0 }, EASE_SMOOTH)
 	Tween(titleLabel, { TextTransparency = 0 }, EASE_SMOOTH)
 	if bodyLabel then Tween(bodyLabel, { TextTransparency = 0.05 }, EASE_SMOOTH) end
-	for _, part in ipairs(heart.Instance:GetChildren()) do
-		if part:IsA("Frame") then Tween(part, { BackgroundTransparency = 0 }, EASE_SMOOTH) end
+	for _, part in ipairs(mark.Parts) do
+		Tween(part, { BackgroundTransparency = 0 }, EASE_SMOOTH)
 	end
-	heart.Beat(0.3)
+	mark.Spin(1)
+	mark.Pulse(0.35)
 	if timerFill then
 		Tween(timerFill, { Size = UDim2.fromScale(0, 1) },
 			TweenInfo.new(duration, Enum.EasingStyle.Linear))
@@ -657,13 +846,13 @@ end
 local function RegisterFlag(element, flag)
 	if not flag then return end
 	element.Flag = flag
-	Love.Options[flag] = element
-	Love.Flags[flag] = element.Value
+	Freaky.Options[flag] = element
+	Freaky.Flags[flag] = element.Value
 end
 
 local function SetFlag(element, value)
 	element.Value = value
-	if element.Flag then Love.Flags[element.Flag] = value end
+	if element.Flag then Freaky.Flags[element.Flag] = value end
 end
 
 -- hover tinting shared by every pressable row
@@ -735,7 +924,12 @@ local function Row(parent, opts)
 		ZIndex = 7, Parent = row,
 	})
 
-	return { Row = row, Stroke = rowStroke, Slot = slot, Title = titleLabel }
+	-- the two things that stop a row being a rectangle: an accent bar that
+	-- grows on hover, and a ring that comes out of wherever you pressed
+	local edge = EdgeBar(row, 7)
+	if opts.Ripple ~= false then Ripple(row, 7) end
+
+	return { Row = row, Stroke = rowStroke, Slot = slot, Title = titleLabel, Edge = edge }
 end
 
 local function ElementAPI(holder, parent)
@@ -869,6 +1063,8 @@ local function ElementAPI(holder, parent)
 		})
 		Corner(11, track)
 		Paint(track, "BackgroundColor3", "Line")
+		local trackSheen = Sheen(track, 0)
+		trackSheen.Enabled = false
 
 		local knob = New("Frame", {
 			Name = "Knob", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
@@ -887,6 +1083,9 @@ local function ElementAPI(holder, parent)
 
 			Tween(track, { BackgroundColor3 = Theme[trackToken] }, info)
 			Tween(knob, { BackgroundColor3 = Theme[knobToken] }, info)
+			-- the gradient only makes sense on a lit track; off, it would
+			-- smear two accents across a grey bar
+			trackSheen.Enabled = api.Value
 			-- the knob overshoots a little, which is what makes a switch
 			-- feel like it has weight rather than teleporting
 			Tween(knob, {
@@ -914,7 +1113,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) base.Title.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			base.Row:Destroy()
 		end
 
@@ -982,6 +1181,7 @@ local function ElementAPI(holder, parent)
 		})
 		Corner(2, fill)
 		Paint(fill, "BackgroundColor3", "Accent")
+		Drift(Sheen(fill, 0), 30)
 
 		local knob = New("Frame", {
 			Name = "Knob", BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
@@ -990,6 +1190,16 @@ local function ElementAPI(holder, parent)
 		})
 		Corner(7, knob)
 		Paint(knob, "BackgroundColor3", "Accent")
+
+		-- a halo behind the knob that blooms while you drag, so the thing
+		-- under your finger is obviously the thing that is moving
+		local halo = New("Frame", {
+			Name = "Halo", BorderSizePixel = 0, BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(13, 13), ZIndex = 8, Parent = knob,
+		})
+		Corner(999, halo)
+		Paint(halo, "BackgroundColor3", "Accent")
 
 		local api = { Instance = row, Type = "Slider", Value = min, Callback = cfg.Callback }
 
@@ -1045,24 +1255,28 @@ local function ElementAPI(holder, parent)
 		hit.InputBegan:Connect(function(input)
 			if not IsClick(input) then return end
 			dragging = true
-			Tween(knob, { Size = UDim2.fromOffset(17, 17) }, EASE_SNAP)
+			Tween(knob, { Size = UDim2.fromOffset(17, 17) }, EASE_POP)
+			Tween(halo, { Size = UDim2.fromOffset(34, 34), BackgroundTransparency = 0.72 }, EASE_OUT)
+			Tween(valueLabel, { TextSize = 14 }, EASE_POP)
 			apply(input.Position.X)
 		end)
-		Love:Connect(UserInputService.InputChanged, function(input)
+		Freaky:Connect(UserInputService.InputChanged, function(input)
 			if not dragging then return end
 			if input.UserInputType ~= Enum.UserInputType.MouseMovement
 				and input.UserInputType ~= Enum.UserInputType.Touch then return end
 			apply(input.Position.X)
 		end)
-		Love:Connect(UserInputService.InputEnded, function(input)
+		Freaky:Connect(UserInputService.InputEnded, function(input)
 			if not dragging or not IsClick(input) then return end
 			dragging = false
-			Tween(knob, { Size = UDim2.fromOffset(13, 13) }, EASE_SNAP)
+			Tween(knob, { Size = UDim2.fromOffset(13, 13) }, EASE_POP)
+			Tween(halo, { Size = UDim2.fromOffset(13, 13), BackgroundTransparency = 1 }, EASE_OUT)
+			Tween(valueLabel, { TextSize = 12.5 }, EASE_OUT)
 		end)
 
 		function api.SetTitle(a, t) titleLabel.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			row:Destroy()
 		end
 
@@ -1322,7 +1536,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) titleLabel.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			box:Destroy()
 		end
 
@@ -1335,7 +1549,7 @@ local function ElementAPI(holder, parent)
 
 	------------------------------------------------------------
 	-- a dropdown wired to the library's palettes. Switching the theme
-	-- anywhere else - the header picker, another dropdown, Love:SetTheme -
+	-- anywhere else - the header picker, another dropdown, Freaky:SetTheme -
 	-- moves this one too.
 	function holder.ThemeDropdown(p1, p2)
 		local cfg = p2
@@ -1345,12 +1559,12 @@ local function ElementAPI(holder, parent)
 
 		local api = holder.Dropdown({
 			Title = cfg.Title or "Theme",
-			Values = Love.ThemeOrder,
-			Default = Love.ThemeName,
+			Values = Freaky.ThemeOrder,
+			Default = Freaky.ThemeName,
 			Flag = cfg.Flag,
 			KeepOpen = cfg.KeepOpen,
 			Callback = function(name)
-				Love.SetTheme(Love, name)
+				Freaky.SetTheme(Freaky, name)
 				Fire(cfg.Callback, name)
 			end,
 		})
@@ -1420,7 +1634,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) base.Title.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			base.Row:Destroy()
 		end
 
@@ -1486,7 +1700,7 @@ local function ElementAPI(holder, parent)
 		function api.Get() return api.Value end
 		api.SetValue = api.Set
 
-		Love:Connect(UserInputService.InputBegan, function(input, processed)
+		Freaky:Connect(UserInputService.InputBegan, function(input, processed)
 			if listening then
 				if input.UserInputType == Enum.UserInputType.Keyboard then
 					if input.KeyCode == Enum.KeyCode.Escape then api.Set(api, nil)
@@ -1500,7 +1714,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) base.Title.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			base.Row:Destroy()
 		end
 
@@ -1586,7 +1800,7 @@ local function ElementAPI(holder, parent)
 		end
 
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			box:Destroy()
 		end
 
@@ -1711,13 +1925,13 @@ local function ElementAPI(holder, parent)
 				dragging = true
 				grab(input.Position.X)
 			end)
-			Love:Connect(UserInputService.InputChanged, function(input)
+			Freaky:Connect(UserInputService.InputChanged, function(input)
 				if not dragging then return end
 				if input.UserInputType ~= Enum.UserInputType.MouseMovement
 					and input.UserInputType ~= Enum.UserInputType.Touch then return end
 				grab(input.Position.X)
 			end)
-			Love:Connect(UserInputService.InputEnded, function(input)
+			Freaky:Connect(UserInputService.InputEnded, function(input)
 				if dragging and IsClick(input) then dragging = false end
 			end)
 
@@ -1776,7 +1990,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) titleLabel.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			box:Destroy()
 		end
 
@@ -1833,6 +2047,7 @@ local function ElementAPI(holder, parent)
 		})
 		Corner(3, fill)
 		Paint(fill, "BackgroundColor3", "Accent")
+		Drift(Sheen(fill, 0), 44)
 
 		local api = { Instance = box, Type = "Progress", Value = 0, Callback = cfg.Callback }
 
@@ -1861,7 +2076,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) titleLabel.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			box:Destroy()
 		end
 
@@ -1991,7 +2206,7 @@ local function ElementAPI(holder, parent)
 
 		function api.SetTitle(a, t) base.Title.Text = tostring(a ~= api and a or t) end
 		function api.Destroy()
-			if api.Flag then Love.Options[api.Flag] = nil end
+			if api.Flag then Freaky.Options[api.Flag] = nil end
 			base.Row:Destroy()
 		end
 
@@ -2006,12 +2221,12 @@ end
 --  WINDOW  (a sidebar, not a floating panel)
 -- ================================================================
 
-function Love.CreateWindow(a, b)
+function Freaky.CreateWindow(a, b)
 	local cfg = b
-	if a ~= Love then cfg = a end
+	if a ~= Freaky then cfg = a end
 	cfg = cfg or {}
 
-	if cfg.Theme and Themes[cfg.Theme] then Love.SetTheme(Love, cfg.Theme) end
+	if cfg.Theme and Themes[cfg.Theme] then Freaky.SetTheme(Freaky, cfg.Theme) end
 
 	-- the sidebar is short and narrow by default and grows sideways: the
 	-- panel widens rather than getting taller, because a tall column in a
@@ -2028,7 +2243,7 @@ function Love.CreateWindow(a, b)
 
 	local Window = {
 		Tabs = {}, ActiveTab = nil, Open = cfg.StartOpen == true,
-		ToggleKey = toggleKey, Title = tostring(cfg.Title or "LoveUI"),
+		ToggleKey = toggleKey, Title = tostring(cfg.Title or "FreakyUI"),
 		OnTheme = cfg.OnTheme, Width = baseWidth, BaseWidth = baseWidth,
 		MaxWidth = maxWidth,
 	}
@@ -2052,6 +2267,9 @@ function Love.CreateWindow(a, b)
 	Corner(12, panel)
 	Paint(panel, "BackgroundColor3", "Bg")
 	local panelStroke = Stroke(panel, "Line", 0.25)
+	-- a UIGradient parented to a UIStroke colours the border itself, which
+	-- is the cheapest way to make the panel look lit from its edges
+	Drift(Sheen(panelStroke, 45), 12)
 	Window.PanelStroke = panelStroke
 
 	----------------------------------------------------------------
@@ -2062,7 +2280,8 @@ function Love.CreateWindow(a, b)
 	-- load, and all of it is painted with theme tokens, so it follows a
 	-- theme switch like everything else.
 	----------------------------------------------------------------
-	local style = tostring(cfg.Background or "hearts"):lower()
+	local style = tostring(cfg.Background or "sparks"):lower()
+	local drifters = {}
 
 	local backdrop = New("Frame", {
 		Name = "Backdrop", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
@@ -2087,23 +2306,46 @@ function Love.CreateWindow(a, b)
 				Size = UDim2.fromOffset(spot[3], spot[3]), ZIndex = 10, Parent = backdrop,
 			})
 			Corner(math.floor(spot[3] / 2), glow)
-			Paint(glow, "BackgroundColor3", "Accent")
+			Paint(glow, "BackgroundColor3", index == 1 and "Accent" or "Accent2")
 			Fade(glow, { { 0, 0.55 }, { 1, 1 } }, index == 1 and 135 or -45)
 		end
 
 		if style ~= "glow" then
 			for _, mark in ipairs({
-				{ 0.82, 0.18, 54, 14 },
+				{ 0.82, 0.16, 54, 14 },
 				{ 0.16, 0.44, 30, -18 },
-				{ 0.66, 0.72, 74, 8 },
+				{ 0.66, 0.70, 74, 8 },
 				{ 0.28, 0.92, 22, -12 },
+				{ 0.92, 0.58, 38, 24 },
 			}) do
-				local heart = Heart(backdrop, mark[3], 10)
-				heart.Instance.Position = UDim2.fromScale(mark[1], mark[2])
-				heart.Instance.Rotation = mark[4]
-				heart.SetTransparency(0.94)
+				local drifter = Spark(backdrop, mark[3], 10)
+				drifter.Instance.Position = UDim2.fromScale(mark[1], mark[2])
+				drifter.Instance.Rotation = mark[4]
+				drifter.SetTransparency(0.93)
+				table.insert(drifters, drifter)
 			end
 		end
+	end
+
+	-- the backdrop marks drift upward and turn, slowly enough that you only
+	-- notice if you stop and look at it
+	if #drifters > 0 then
+		task.spawn(function()
+			while not Freaky.Unloaded and backdrop.Parent do
+				for index, drifter in ipairs(drifters) do
+					local inst = drifter.Instance
+					if inst.Parent then
+						local up = inst.Position.Y.Scale - 0.24
+						if up < -0.1 then up = 1.05 end
+						Tween(inst, {
+							Position = UDim2.fromScale(inst.Position.X.Scale, up),
+							Rotation = inst.Rotation + 40 + index * 7,
+						}, TweenInfo.new(7, Enum.EasingStyle.Linear))
+					end
+				end
+				task.wait(7)
+			end
+		end)
 	end
 
 	local handle = New("TextButton", {
@@ -2114,6 +2356,7 @@ function Love.CreateWindow(a, b)
 	})
 	Corner(4, handle)
 	Paint(handle, "BackgroundColor3", "Accent")
+	Drift(Sheen(handle, 90), 26)
 	Fade(handle, { { 0, 0.35 }, { 0.5, 0 }, { 1, 0.35 } })
 
 	----------------------------------------------------------------
@@ -2125,17 +2368,16 @@ function Love.CreateWindow(a, b)
 	})
 	Padding(header, 0, 0, 16, 14)
 
-	local headerHeart = Heart(header, 18, 12)
-	headerHeart.Instance.Position = UDim2.new(0, 9, 0.5, -1)
+	local headerSpark = Spark(header, 18, 12)
+	headerSpark.Instance.Position = UDim2.new(0, 9, 0.5, -1)
 
-	-- the heart beats every few seconds, the way an idle cursor blinks: it
-	-- is the only thing on screen that moves on its own, and it is the
-	-- library telling you it is still running
+	-- the mark flares every few seconds, the way an idle cursor blinks: it
+	-- is the library telling you it is still running
 	task.spawn(function()
-		while not Love.Unloaded and header.Parent do
+		while not Freaky.Unloaded and header.Parent do
 			task.wait(6)
-			if Love.Unloaded or not header.Parent then break end
-			if Window.Open then headerHeart.Beat(0.12) end
+			if Freaky.Unloaded or not header.Parent then break end
+			if Window.Open then headerSpark.Pulse(0.12) end
 		end
 	end)
 
@@ -2144,6 +2386,9 @@ function Love.CreateWindow(a, b)
 		Text = Window.Title, Position = UDim2.new(0, 31, 0, 13),
 		Size = UDim2.new(1, -72, 0, 18),
 	})
+	-- a UIGradient on a TextLabel tints the letters, so the title itself
+	-- carries the palette rather than sitting there in plain white
+	Drift(Sheen(titleLabel, 0), 16)
 	Text({
 		Name = "SubTitle", Parent = header, ZIndex = 12, Font = FONT, TextSize = 12,
 		Token = "Muted", Text = tostring(cfg.SubTitle or ""),
@@ -2226,7 +2471,7 @@ function Love.CreateWindow(a, b)
 
 		rowBtn.MouseButton1Click:Connect(function()
 			themeMenu.Visible = false
-			Love.SetTheme(Love, name)
+			Freaky.SetTheme(Freaky, name)
 		end)
 		themeRows[name] = { Button = rowBtn, Label = rowLabel }
 	end
@@ -2251,7 +2496,10 @@ function Love.CreateWindow(a, b)
 	-- catches the new accent, and the swatch pops
 	function Window.Flash()
 		if not panel.Parent then return end
-		headerHeart.Beat(0.26)
+		headerSpark.Pulse(0.34)
+		headerSpark.Spin(-1)
+		Glitch(titleLabel, 4)
+		Sweep(panel, 30)
 		Tween(themeDot, { Size = UDim2.fromOffset(17, 17) }, EASE_POP)
 		Tween(panelStroke, { Color = Theme.Accent, Transparency = 0.1 }, EASE_OUT)
 		task.delay(0.28, function()
@@ -2270,7 +2518,10 @@ function Love.CreateWindow(a, b)
 		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 1),
 		ZIndex = 11, Parent = header,
 	})
-	Paint(header:FindFirstChild("Rule"), "BackgroundColor3", "Line")
+	local rule = header:FindFirstChild("Rule")
+	Paint(rule, "BackgroundColor3", "Accent")
+	rule.BackgroundTransparency = 0.4
+	Drift(Sheen(rule, 0), 34)
 
 	----------------------------------------------------------------
 	-- tab strip
@@ -2346,7 +2597,9 @@ function Love.CreateWindow(a, b)
 		-- opening is worth a little flourish: the heart beats and the panel
 		-- edge catches the accent for a moment
 		if Window.Open and not was then
-			headerHeart.Beat(0.24)
+			headerSpark.Pulse(0.3)
+			headerSpark.Spin(1)
+			Sweep(panel, 30)
 			Tween(panelStroke, { Color = Theme.Accent, Transparency = 0 }, EASE_OUT)
 			task.delay(0.45, function()
 				if panel.Parent then
@@ -2371,7 +2624,7 @@ function Love.CreateWindow(a, b)
 		Tween(handle, { BackgroundTransparency = 0.1 }, EASE_SNAP)
 	end)
 
-	Love:Connect(UserInputService.InputChanged, function(input)
+	Freaky:Connect(UserInputService.InputChanged, function(input)
 		if not dragging then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseMovement
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -2401,7 +2654,7 @@ function Love.CreateWindow(a, b)
 		end
 	end)
 
-	Love:Connect(UserInputService.InputEnded, function(input)
+	Freaky:Connect(UserInputService.InputEnded, function(input)
 		if not dragging or not IsClick(input) then return end
 		dragging = false
 		Tween(handle, { BackgroundTransparency = Window.Open and 0.7 or 0.4 }, EASE_OUT)
@@ -2425,9 +2678,9 @@ function Love.CreateWindow(a, b)
 	-- while the sidebar is shut the handle breathes, slowly, so a strip of
 	-- pink at the edge of the screen reads as something you can grab
 	task.spawn(function()
-		while not Love.Unloaded and handle.Parent do
+		while not Freaky.Unloaded and handle.Parent do
 			task.wait(2.2)
-			if Love.Unloaded or not handle.Parent then break end
+			if Freaky.Unloaded or not handle.Parent then break end
 			if not Window.Open and not dragging then
 				Tween(handle, { BackgroundTransparency = 0.15 },
 					TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut))
@@ -2441,7 +2694,7 @@ function Love.CreateWindow(a, b)
 		end
 	end)
 
-	Love:Connect(UserInputService.InputBegan, function(input, processed)
+	Freaky:Connect(UserInputService.InputBegan, function(input, processed)
 		if processed then return end
 		if Window.ToggleKey and input.KeyCode == Window.ToggleKey then Window.Toggle() end
 	end)
@@ -2474,8 +2727,8 @@ function Love.CreateWindow(a, b)
 
 	function Window.Destroy()
 		drawer:Destroy()
-		for i, w in ipairs(Love.Windows) do
-			if w == Window then table.remove(Love.Windows, i); break end
+		for i, w in ipairs(Freaky.Windows) do
+			if w == Window then table.remove(Freaky.Windows, i); break end
 		end
 	end
 
@@ -2492,7 +2745,7 @@ function Love.CreateWindow(a, b)
 
 		tabOrder = tabOrder + 1
 		local name = tostring(tcfg.Title or ("Tab " .. tabOrder))
-		local Tab = { Title = name, Window = Window }
+		local Tab = { Title = name, Window = Window, Sections = {} }
 
 		local pill = New("TextButton", {
 			Name = name, AutoButtonColor = false, Text = "", BorderSizePixel = 0,
@@ -2502,6 +2755,12 @@ function Love.CreateWindow(a, b)
 		Corner(14, pill)
 		Paint(pill, "BackgroundColor3", "Card")
 		Padding(pill, 0, 0, 14, 14)
+		local pillSheen = Sheen(pill, 0)
+		pillSheen.Enabled = false
+		Ripple(pill, 13)
+		-- a pill is sized by its own text, so it cannot be tweened wider;
+		-- a UIScale pops it instead
+		local pillScale = New("UIScale", { Scale = 1, Parent = pill })
 
 		local pillLabel = Text({
 			Parent = pill, ZIndex = 13, Font = FONT_M, TextSize = 13, Token = "Sub",
@@ -2531,9 +2790,16 @@ function Love.CreateWindow(a, b)
 		local function paintPill(active)
 			Tween(pill, { BackgroundColor3 = active and Theme.Accent or Theme.Card }, EASE_SNAP)
 			Tween(pillLabel, { TextColor3 = active and Theme.OnAccent or Theme.Sub }, EASE_SNAP)
+			pillSheen.Enabled = active
 			for _, entry in ipairs(Painted) do
 				if entry.Instance == pill then entry.Token = active and "Accent" or "Card" end
 				if entry.Instance == pillLabel then entry.Token = active and "OnAccent" or "Sub" end
+			end
+			if active then
+				Tween(pillScale, { Scale = 1.1 }, EASE_POP)
+				task.delay(0.16, function()
+					if pill.Parent then Tween(pillScale, { Scale = 1 }, EASE_POP) end
+				end)
 			end
 		end
 
@@ -2568,6 +2834,19 @@ function Love.CreateWindow(a, b)
 			Tween(wrap, {
 				GroupTransparency = 0, Position = UDim2.fromOffset(0, 0),
 			}, EASE_SMOOTH)
+
+			-- and the sections are dealt in behind it, one after another
+			for index, section in ipairs(Tab.Sections) do
+				if section.Parent then
+					section.GroupTransparency = 1
+					task.delay(0.04 * index, function()
+						if section.Parent and Window.ActiveTab == Tab then
+							Tween(section, { GroupTransparency = 0 }, EASE_SMOOTH)
+						end
+					end)
+				end
+			end
+
 			paintPill(true)
 		end
 		Tab.Paint = paintPill
@@ -2589,17 +2868,32 @@ function Love.CreateWindow(a, b)
 			if typeof(scfg) == "string" then scfg = { Title = scfg } end
 			scfg = scfg or {}
 
-			local holder = New("Frame", {
+			local holder = New("CanvasGroup", {
 				Name = "Section", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = #page:GetChildren(),
 				ZIndex = 11, Parent = page,
 			})
 			List(holder, 8)
 
+			-- the heading gets a short accent bar rather than being one more
+			-- grey word in a column of grey words
+			local headRow = New("Frame", {
+				Name = "Head", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 15),
+				LayoutOrder = 1, ZIndex = 11, Parent = holder,
+			})
+			local tick = New("Frame", {
+				Name = "Tick", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(10, 2),
+				ZIndex = 11, Parent = headRow,
+			})
+			Corner(1, tick)
+			Paint(tick, "BackgroundColor3", "Accent")
+			Drift(Sheen(tick, 0), 40)
+
 			Text({
-				Name = "Title", Parent = holder, ZIndex = 11, Font = FONT_B, TextSize = 12,
+				Name = "Title", Parent = headRow, ZIndex = 11, Font = FONT_B, TextSize = 12,
 				Token = "Muted", Text = string.upper(tostring(scfg.Title or "Section")),
-				Size = UDim2.new(1, 0, 0, 15), LayoutOrder = 1,
+				Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -16, 1, 0),
 			})
 
 			local inner = New("Frame", {
@@ -2610,7 +2904,13 @@ function Love.CreateWindow(a, b)
 			List(inner, 8)
 
 			local Section = { Instance = holder, Container = inner, Window = Window }
-			function Section.Destroy() holder:Destroy() end
+			function Section.Destroy()
+				for i, entry in ipairs(Tab.Sections) do
+					if entry == holder then table.remove(Tab.Sections, i); break end
+				end
+				holder:Destroy()
+			end
+			table.insert(Tab.Sections, holder)
 			ElementAPI(Section, inner)
 			return Section
 		end
@@ -2623,11 +2923,11 @@ function Love.CreateWindow(a, b)
 	Window.AddTab = Window.CreateTab
 
 	function Window.Notify(p1, p2)
-		return Love.Notify(p1 ~= Window and p1 or p2)
+		return Freaky.Notify(p1 ~= Window and p1 or p2)
 	end
 
 	Window.SetOpen(Window, Window.Open)
-	table.insert(Love.Windows, Window)
+	table.insert(Freaky.Windows, Window)
 	return Window
 end
 
@@ -2635,35 +2935,35 @@ end
 --  LIFECYCLE
 -- ================================================================
 
-function Love.GetFlag(a, b)
+function Freaky.GetFlag(a, b)
 	local flag = b
-	if a ~= Love then flag = a end
-	return Love.Flags[flag]
+	if a ~= Freaky then flag = a end
+	return Freaky.Flags[flag]
 end
 
-function Love.SetFlag(a, b, c)
+function Freaky.SetFlag(a, b, c)
 	local flag, value = b, c
-	if a ~= Love then flag, value = a, b end
-	local element = Love.Options[flag]
+	if a ~= Freaky then flag, value = a, b end
+	local element = Freaky.Options[flag]
 	if element and element.Set then return element.Set(element, value) end
-	Love.Flags[flag] = value
+	Freaky.Flags[flag] = value
 	return value
 end
 
-function Love.Unload()
-	if Love.Unloaded then return end
-	Love.Unloaded = true
+function Freaky.Unload()
+	if Freaky.Unloaded then return end
+	Freaky.Unloaded = true
 
-	for _, conn in ipairs(Love.Connections) do
+	for _, conn in ipairs(Freaky.Connections) do
 		pcall(function() conn:Disconnect() end)
 	end
-	table.clear(Love.Connections)
-	table.clear(Love.Windows)
-	table.clear(Love.Options)
+	table.clear(Freaky.Connections)
+	table.clear(Freaky.Windows)
+	table.clear(Freaky.Options)
 	table.clear(Painted)
 
 	if Root then Root:Destroy() end
 end
-Love.Destroy = Love.Unload
+Freaky.Destroy = Freaky.Unload
 
-return Love
+return Freaky

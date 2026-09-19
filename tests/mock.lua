@@ -67,10 +67,27 @@ Vector2 = { new = vec2, zero = vec2(0, 0) }
 local function vec3(x, y, z) return tag({ X = x or 0, Y = y or 0, Z = z or 0 }, "Vector3") end
 Vector3 = { new = vec3 }
 
-UDim = { new = function(s, o) return tag({ Scale = s or 0, Offset = o or 0 }, "UDim") end }
+local UDimMt = {}
+local function udim(s, o)
+	return tag(setmetatable({ Scale = s or 0, Offset = o or 0 }, UDimMt), "UDim")
+end
+UDimMt.__add = function(a, b) return udim(a.Scale + b.Scale, a.Offset + b.Offset) end
+UDimMt.__sub = function(a, b) return udim(a.Scale - b.Scale, a.Offset - b.Offset) end
+UDim = { new = udim }
 
+-- UDim2 supports arithmetic in Roblox, and code that offsets a position by
+-- adding to it is common enough that leaving it out hides real bugs
+local UDim2mt = {}
 local function udim2(xs, xo, ys, yo)
-	return tag({ X = UDim.new(xs, xo), Y = UDim.new(ys, yo) }, "UDim2")
+	return tag(setmetatable({ X = udim(xs, xo), Y = udim(ys, yo) }, UDim2mt), "UDim2")
+end
+UDim2mt.__add = function(a, b)
+	return udim2(a.X.Scale + b.X.Scale, a.X.Offset + b.X.Offset,
+		a.Y.Scale + b.Y.Scale, a.Y.Offset + b.Y.Offset)
+end
+UDim2mt.__sub = function(a, b)
+	return udim2(a.X.Scale - b.X.Scale, a.X.Offset - b.X.Offset,
+		a.Y.Scale - b.Y.Scale, a.Y.Offset - b.Y.Offset)
 end
 UDim2 = {
 	new = udim2,
@@ -118,23 +135,39 @@ Color3 = {
 }
 
 NumberSequenceKeypoint = { new = function(t, v) return tag({ Time = t, Value = v }, "NumberSequenceKeypoint") end }
-NumberSequence = {
-	new = function(a)
-		-- Roblox rejects a sequence that does not span the whole range, and
-		-- the error only shows up in game, so check it here too
-		if type(a) == "table" then
-			assert(#a >= 2, "NumberSequence needs at least 2 keypoints")
-			assert(a[1].Time == 0, "NumberSequence keypoint times must start at 0")
-			assert(a[#a].Time == 1, "NumberSequence keypoint times must end at 1")
-			for i = 2, #a do
-				assert(a[i].Time > a[i - 1].Time, "NumberSequence keypoint times must increase")
-			end
+-- Both sequence types take either a list of keypoints or one or two plain
+-- values, and Roblox builds the keypoints for you in the second form. The
+-- mock used to keep whatever it was handed, which let code read
+-- .Keypoints[1].Value in tests while the real thing held something else.
+local function sequenceKeypoints(kind, keypoint, a, b)
+	if type(a) == "table" and not TypeTags[a] then
+		assert(#a >= 2, kind .. " needs at least 2 keypoints")
+		assert(a[1].Time == 0, kind .. " keypoint times must start at 0")
+		assert(a[#a].Time == 1, kind .. " keypoint times must end at 1")
+		for i = 2, #a do
+			assert(a[i].Time > a[i - 1].Time, kind .. " keypoint times must increase")
 		end
-		return tag({ Keypoints = a }, "NumberSequence")
+		return a
+	end
+	if b == nil then
+		return { keypoint.new(0, a), keypoint.new(1, a) }
+	end
+	return { keypoint.new(0, a), keypoint.new(1, b) }
+end
+
+NumberSequence = {
+	new = function(a, b)
+		return tag({ Keypoints = sequenceKeypoints("NumberSequence", NumberSequenceKeypoint, a, b) },
+			"NumberSequence")
 	end,
 }
 ColorSequenceKeypoint = { new = function(t, v) return tag({ Time = t, Value = v }, "ColorSequenceKeypoint") end }
-ColorSequence = { new = function(a) return tag({ Keypoints = a }, "ColorSequence") end }
+ColorSequence = {
+	new = function(a, b)
+		return tag({ Keypoints = sequenceKeypoints("ColorSequence", ColorSequenceKeypoint, a, b) },
+			"ColorSequence")
+	end,
+}
 TweenInfo = { new = function(...) return tag({ ... }, "TweenInfo") end }
 Rect = { new = function(x0, y0, x1, y1)
 	return tag({

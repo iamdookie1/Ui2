@@ -1,10 +1,10 @@
--- LoveUI, exercised against the same mock Roblox environment as Onyx.
+-- FreakyUI, exercised against the same mock Roblox environment as Onyx.
 assert(pcall(function() Instance.new("Frame").Text = "" end) == false,
 	"the mock must reject invalid properties")
 
-local ok, Love = pcall(LoadLove)
-assert(ok, "library failed to load: " .. tostring(Love))
-print("loaded " .. Love.Name .. " v" .. Love.Version)
+local ok, Freaky = pcall(LoadFreaky)
+assert(ok, "library failed to load: " .. tostring(Freaky))
+print("loaded " .. Freaky.Name .. " v" .. Freaky.Version)
 
 local fired = {}
 local function note(k, v) fired[k] = v end
@@ -18,8 +18,8 @@ end
 --------------------------------------------------------------------
 -- window
 --------------------------------------------------------------------
-local Window = Love:CreateWindow({
-	Title = "Love Demo", SubTitle = "v1", Theme = "Rose",
+local Window = Freaky:CreateWindow({
+	Title = "Freaky Demo", SubTitle = "v1", Theme = "Freak",
 	Width = 340, Keybind = Enum.KeyCode.RightShift,
 })
 assert(Window and Window.Instance, "no drawer")
@@ -75,9 +75,9 @@ button:SetTitle("Kill everything")
 
 local toggle = Combat:Toggle({ Title = "Aimbot", Flag = "aimbot", Default = false,
 	Callback = function(v) note("aimbot", v) end })
-assert(Love.Flags.aimbot == false, "toggle did not register its flag")
+assert(Freaky.Flags.aimbot == false, "toggle did not register its flag")
 toggle:Set(true)
-assert(fired.aimbot == true and Love:GetFlag("aimbot") == true, "toggle Set failed")
+assert(fired.aimbot == true and Freaky:GetFlag("aimbot") == true, "toggle Set failed")
 toggle.Instance.MouseButton1Click:Fire()
 assert(toggle:Get() == false, "clicking the row should flip the toggle")
 
@@ -90,13 +90,13 @@ slider:Set(0)
 assert(slider:Get() == 20, "slider must clamp to Min")
 slider:Set(123)
 assert(slider:Get() == 125, "slider must snap to Increment")
-assert(fired.fov == 125 and Love.Flags.fov == 125, "slider flag/callback wrong")
+assert(fired.fov == 125 and Freaky.Flags.fov == 125, "slider flag/callback wrong")
 
 local drop = Combat:Dropdown({ Title = "Target", Values = { "Head", "Torso" },
 	Default = "Head", Flag = "part", Callback = function(v) note("part", v) end })
 assert(drop:Get() == "Head", "dropdown default wrong")
 drop:Set("Torso")
-assert(fired.part == "Torso" and Love.Flags.part == "Torso", "dropdown Set failed")
+assert(fired.part == "Torso" and Freaky.Flags.part == "Torso", "dropdown Set failed")
 drop:SetOpen(true)
 assert(drop.Open == true, "dropdown did not open")
 -- the list expands to a height rather than snapping open
@@ -115,7 +115,7 @@ assert(drop.Instance:FindFirstChild("Options").Visible == false,
 local input = Combat:Input({ Title = "Name", Placeholder = "type here", Default = "",
 	Flag = "name", Callback = function(v) note("name", v) end })
 input:Set("hello")
-assert(input:Get() == "hello" and Love.Flags.name == "hello", "input Set failed")
+assert(input:Get() == "hello" and Freaky.Flags.name == "hello", "input Set failed")
 
 local bindHits = 0
 local bind = Combat:Keybind({ Title = "Panic", Default = Enum.KeyCode.P, Flag = "panic",
@@ -258,42 +258,70 @@ assert(panel:FindFirstChild("Header"):FindFirstChild("Title").Text == "Renamed",
 --------------------------------------------------------------------
 -- themes: every palette carries pink, and switching repaints live
 --------------------------------------------------------------------
-local function isPink(c)
-	local h, s, v = c:ToHSV()
-	local deg = h * 360
-	return s > 0.25 and v > 0.35 and (deg >= 290 or deg <= 20)
+-- every palette has to be complete and loud: two distinct accents, and
+-- enough contrast between the text and what it sits on
+local REQUIRED = {
+	"Bg", "Panel", "Card", "Hover", "Line", "Text", "Sub", "Muted",
+	"Accent", "Accent2", "OnAccent", "Error",
+}
+
+local function luminance(c)
+	return 0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B
 end
 
-for _, name in ipairs(Love.ThemeOrder) do
-	assert(isPink(Love.Themes[name].Accent),
-		"theme " .. name .. " has no pink in its accent")
+local function saturation(c)
+	local _, sat = c:ToHSV()
+	return sat
+end
+
+local function apart(a, b)
+	return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B)
+end
+
+for _, name in ipairs(Freaky.ThemeOrder) do
+	local palette = Freaky.Themes[name]
+	assert(palette, "ThemeOrder names a theme that does not exist: " .. name)
+	for _, token in ipairs(REQUIRED) do
+		assert(palette[token], name .. " is missing " .. token)
+	end
+	-- Void is deliberately colourless; everything else has to be saturated
+	if name ~= "Void" then
+		assert(saturation(palette.Accent) > 0.45,
+			name .. " has a washed-out accent")
+		assert(apart(palette.Accent, palette.Accent2) > 0.25,
+			name .. " has two accents that are nearly the same colour")
+	end
+	assert(math.abs(luminance(palette.Text) - luminance(palette.Bg)) > 0.4,
+		name .. " does not have readable text on its background")
+	assert(math.abs(luminance(palette.OnAccent) - luminance(palette.Accent)) > 0.25,
+		name .. " does not have readable text on its accent")
 end
 
 local before = panel.BackgroundColor3
-Love:SetTheme("Midnight")
-assert(Love.ThemeName == "Midnight", "SetTheme did not take")
+Freaky:SetTheme("Venom")
+assert(Freaky.ThemeName == "Venom", "SetTheme did not take")
 assert(panel.BackgroundColor3 ~= before, "switching theme did not repaint the panel")
-assert(panel.BackgroundColor3 == Love.Themes.Midnight.Bg, "panel painted the wrong token")
+assert(panel.BackgroundColor3 == Freaky.Themes.Venom.Bg, "panel painted the wrong token")
 
-local next1 = Love:NextTheme()
-assert(next1 == "Blush", "NextTheme should follow ThemeOrder")
-assert(panel.BackgroundColor3 == Love.Themes.Blush.Bg, "NextTheme did not repaint")
+local next1 = Freaky:NextTheme()
+assert(next1 == "Cyber", "NextTheme should follow ThemeOrder")
+assert(panel.BackgroundColor3 == Freaky.Themes.Cyber.Bg, "NextTheme did not repaint")
 
-Love:SetTheme("Nonexistent")
-assert(Love.ThemeName == "Blush", "an unknown theme must be ignored")
-Love:SetTheme("Rose")
+Freaky:SetTheme("Nonexistent")
+assert(Freaky.ThemeName == "Cyber", "an unknown theme must be ignored")
+Freaky:SetTheme("Freak")
 
 -- elements built after a switch use the new palette
 local Late = Main:CreateSection("Late")
 local lateButton = Late:Button({ Title = "Late" })
-assert(lateButton.Instance.BackgroundColor3 == Love.Themes.Rose.Card,
+assert(lateButton.Instance.BackgroundColor3 == Freaky.Themes.Freak.Card,
 	"an element built after a theme switch used a stale colour")
 
 --------------------------------------------------------------------
 -- notifications
 --------------------------------------------------------------------
 local toastsBefore = #MOCK.allInstances
-Love:Notify({ Title = "Hello", Content = "World", Duration = 1 })
+Freaky:Notify({ Title = "Hello", Content = "World", Duration = 1 })
 local toast = find(function(i) return i.Name == "Toast" end)
 assert(toast, "notification did not build a toast")
 assert(#MOCK.allInstances > toastsBefore, "notification built nothing")
@@ -311,10 +339,10 @@ do
 	local Looks = Window:CreateTab("Looks")
 	local Palette = Looks:CreateSection("Palette")
 	local themeDrop = Palette:ThemeDropdown({ Title = "Theme" })
-	assert(themeDrop:Get() == Love.ThemeName, "theme dropdown started out of step")
+	assert(themeDrop:Get() == Freaky.ThemeName, "theme dropdown started out of step")
 
-	Love:SetTheme("Wine")
-	assert(themeDrop:Get() == "Wine", "SetTheme did not move the theme dropdown")
+	Freaky:SetTheme("Inferno")
+	assert(themeDrop:Get() == "Inferno", "SetTheme did not move the theme dropdown")
 
 	local menu = panel:FindFirstChild("ThemeMenu")
 	assert(menu, "the header has no theme menu")
@@ -324,14 +352,14 @@ do
 	swatch.MouseButton1Click:Fire()
 	assert(menu.Visible == true, "the swatch did not open the theme menu")
 
-	menu:FindFirstChild("Sakura").MouseButton1Click:Fire()
-	assert(Love.ThemeName == "Sakura", "the header picker did not set the theme")
+	menu:FindFirstChild("Cyber").MouseButton1Click:Fire()
+	assert(Freaky.ThemeName == "Cyber", "the header picker did not set the theme")
 	assert(menu.Visible == false, "picking a theme should close the menu")
-	assert(themeDrop:Get() == "Sakura", "the header picker did not move the dropdown")
+	assert(themeDrop:Get() == "Cyber", "the header picker did not move the dropdown")
 
 	-- and the other direction
-	themeDrop:Set("Rose")
-	assert(Love.ThemeName == "Rose", "the dropdown did not set the theme")
+	themeDrop:Set("Freak")
+	assert(Freaky.ThemeName == "Freak", "the dropdown did not set the theme")
 
 	-- navigating away closes the menu
 	swatch.MouseButton1Click:Fire()
@@ -341,10 +369,10 @@ do
 	Looks:Select()
 
 	local late = Palette:ThemeDropdown("Theme again")
-	assert(late:Get() == "Rose", "a picker built later started out of step")
-	Love:NextTheme()
-	assert(late:Get() == Love.ThemeName, "NextTheme did not reach the pickers")
-	Love:SetTheme("Rose")
+	assert(late:Get() == "Freak", "a picker built later started out of step")
+	Freaky:NextTheme()
+	assert(late:Get() == Freaky.ThemeName, "NextTheme did not reach the pickers")
+	Freaky:SetTheme("Freak")
 	Main:Select()
 end
 
@@ -366,18 +394,18 @@ do
 	assert(stack.Size.X.Offset <= 180, "the toast stack is too wide")
 
 	-- the cap is the thing being tested, so prove the count tracks it
-	Love.MaxToasts = 5
-	for i = 1, 6 do Love:Notify({ Title = "A" .. i, Duration = 0 }) end
+	Freaky.MaxToasts = 5
+	for i = 1, 6 do Freaky:Notify({ Title = "A" .. i, Duration = 0 }) end
 	MOCK.step(0.6)
 	assert(liveSlots() == 5, "expected 5 toasts, got " .. liveSlots())
 
-	Love.MaxToasts = 3
-	for i = 1, 6 do Love:Notify({ Title = "T" .. i, Duration = 0 }) end
+	Freaky.MaxToasts = 3
+	for i = 1, 6 do Freaky:Notify({ Title = "T" .. i, Duration = 0 }) end
 	MOCK.step(0.6)
 	assert(liveSlots() == 3, "expected the stack to cap at 3, got " .. liveSlots())
 
 	-- a long message is height-capped rather than allowed to climb
-	Love:Notify({ Title = "Long", Content = string.rep("word ", 120), Duration = 0 })
+	Freaky:Notify({ Title = "Long", Content = string.rep("word ", 120), Duration = 0 })
 	MOCK.step(0.6)
 	local body
 	for _, inst in ipairs(MOCK.allInstances) do
@@ -394,7 +422,7 @@ do
 	assert(dressed:FindFirstChild("Wash"):FindFirstChildOfClass("UIGradient"),
 		"the wash should be a gradient, not a flat tint")
 	assert(dressed:FindFirstChild("Edge"), "the toast has no accent edge")
-	local timed = Love:Notify({ Title = "Timed", Duration = 2 })
+	local timed = Freaky:Notify({ Title = "Timed", Duration = 2 })
 	local lane = timed.Instance:FindFirstChild("Timer")
 	assert(lane, "a toast with a duration should show a timer")
 	assert(lane:GetChildren()[1].Size.X.Scale == 0, "the timer should drain to empty")
@@ -431,7 +459,7 @@ do
 	assert(#multi:Get() == 2, "Set did not replace the selection")
 	multi:SetValues({ "C" })
 	assert(#multi:Get() == 1 and multi:Get()[1] == "C", "SetValues did not prune the selection")
-	assert(#Love.Flags.parts == 1, "the flag did not follow")
+	assert(#Freaky.Flags.parts == 1, "the flag did not follow")
 
 	-- a single dropdown still behaves
 	local single = Bits:Dropdown({ Title = "One", Values = { "X", "Y" }, Default = "X" })
@@ -444,7 +472,7 @@ do
 	assert(#area.Lines() == 2, "textarea did not split its lines")
 	area:Set("a\nb\nc")
 	assert(#area.Lines() == 3, "textarea Set failed")
-	assert(Love.Flags.notes == "a\nb\nc", "textarea flag did not follow")
+	assert(Freaky.Flags.notes == "a\nb\nc", "textarea flag did not follow")
 
 	-- colour picker
 	local seen
@@ -456,7 +484,7 @@ do
 	assert(pick:Get().R > 0.9 and pick:Get().B < 0.1, "colour picker lost its default")
 	pick:Set(Color3.fromRGB(0, 0, 255))
 	assert(seen and seen.B > 0.9 and seen.R < 0.1, "colour picker callback wrong")
-	assert(Love.Flags.tracer.B > 0.9, "colour picker flag did not follow")
+	assert(Freaky.Flags.tracer.B > 0.9, "colour picker flag did not follow")
 	pick:SetOpen(true)
 	assert(pick.Open == true, "colour picker did not open")
 	local bars = pick.Instance:FindFirstChild("Bars")
@@ -492,11 +520,11 @@ do
 	local stat = Bits:Stat({ Title = "Ping", Value = "0ms", Flag = "ping" })
 	stat:Set("42ms")
 	assert(stat:Get() == "42ms", "stat Set failed")
-	assert(Love.Flags.ping == "42ms", "stat flag did not follow")
+	assert(Freaky.Flags.ping == "42ms", "stat flag did not follow")
 
 	-- everything above survives a theme switch
-	Love:SetTheme("Midnight")
-	Love:SetTheme("Rose")
+	Freaky:SetTheme("Venom")
+	Freaky:SetTheme("Freak")
 	Main:Select()
 end
 
@@ -510,56 +538,164 @@ do
 	assert(backdrop:FindFirstChild("Glow1") and backdrop:FindFirstChild("Glow2"),
 		"expected two corner glows")
 
-	local hearts = 0
+	local sparks = 0
 	for _, child in ipairs(backdrop:GetChildren()) do
-		if child.Name == "Heart" then hearts = hearts + 1 end
+		if child.Name == "Spark" then sparks = sparks + 1 end
 	end
-	assert(hearts >= 3, "expected hearts behind the content, found " .. hearts)
+	assert(sparks >= 4, "expected sparks behind the content, found " .. sparks)
 
 	-- the backdrop follows a theme switch like everything else
 	local washColour = backdrop:FindFirstChild("Wash").BackgroundColor3
-	Love:SetTheme("Midnight")
+	Freaky:SetTheme("Venom")
 	assert(backdrop:FindFirstChild("Wash").BackgroundColor3 ~= washColour,
 		"the backdrop did not repaint with the theme")
-	Love:SetTheme("Rose")
+	Freaky:SetTheme("Freak")
 
 	-- and it can be turned off
-	local plain = Love:CreateWindow({ Title = "Plain", Background = "plain" })
+	local plain = Freaky:CreateWindow({ Title = "Plain", Background = "plain" })
 	local plainBack = plain.Instance:FindFirstChild("Panel"):FindFirstChild("Backdrop")
 	assert(plainBack and #plainBack:GetChildren() == 0, "Background = plain should draw nothing")
 	plain:Destroy()
 
-	local glowOnly = Love:CreateWindow({ Title = "Glow", Background = "glow" })
+	local glowOnly = Freaky:CreateWindow({ Title = "Glow", Background = "glow" })
 	local glowBack = glowOnly.Instance:FindFirstChild("Panel"):FindFirstChild("Backdrop")
-	local glowHearts = 0
+	local glowSparks = 0
 	for _, child in ipairs(glowBack:GetChildren()) do
-		if child.Name == "Heart" then glowHearts = glowHearts + 1 end
+		if child.Name == "Spark" then glowSparks = glowSparks + 1 end
 	end
-	assert(glowHearts == 0, "Background = glow should skip the hearts")
+	assert(glowSparks == 0, "Background = glow should skip the sparks")
 	assert(glowBack:FindFirstChild("Wash"), "Background = glow still wants the wash")
 	glowOnly:Destroy()
 end
 
 --------------------------------------------------------------------
+-- the brand: two accents, gradients, a spark and some movement
+--------------------------------------------------------------------
+do
+	local RS = game:GetService("RunService")
+
+	local function gradientOf(inst)
+		return inst and inst:FindFirstChildOfClass("UIGradient")
+	end
+
+	-- the mark is a four-blade spark, not a font glyph
+	local spark = panel:FindFirstChild("Header"):FindFirstChild("Spark")
+	assert(spark, "the header has no spark")
+	local blades = 0
+	for _, child in ipairs(spark:GetChildren()) do
+		if child.ClassName == "Frame" then blades = blades + 1 end
+	end
+	assert(blades == 4, "expected 4 blades, found " .. blades)
+	assert(spark:FindFirstChildOfClass("UIScale"), "the spark cannot pulse without a UIScale")
+
+	-- the straight blades take Accent, the diagonals take Accent2
+	local straight, diagonal = 0, 0
+	for _, child in ipairs(spark:GetChildren()) do
+		if child.ClassName == "Frame" then
+			if child.BackgroundColor3 == Freaky.Themes.Freak.Accent then straight = straight + 1 end
+			if child.BackgroundColor3 == Freaky.Themes.Freak.Accent2 then diagonal = diagonal + 1 end
+		end
+	end
+	assert(straight == 2 and diagonal == 2,
+		"the spark should carry both accents, got " .. straight .. "/" .. diagonal)
+
+	-- the panel border, the handle and the title all run the accent pair
+	local stroke = panel:FindFirstChildOfClass("UIStroke")
+	assert(gradientOf(stroke), "the panel border is not a gradient")
+	assert(gradientOf(handle), "the handle is not a gradient")
+	assert(gradientOf(panel:FindFirstChild("Header"):FindFirstChild("Title")),
+		"the title does not carry the palette")
+
+	-- gradients repaint with the theme, like painted properties do
+	local strokeGradient = gradientOf(stroke)
+	local before = strokeGradient.Color.Keypoints[1].Value
+	Freaky:SetTheme("Cyber")
+	assert(strokeGradient.Color.Keypoints[1].Value ~= before,
+		"gradients did not repaint on a theme switch")
+	assert(strokeGradient.Color.Keypoints[1].Value == Freaky.Themes.Cyber.Accent,
+		"gradient took the wrong colour")
+	assert(strokeGradient.Color.Keypoints[2].Value == Freaky.Themes.Cyber.Accent2,
+		"gradient did not take the second accent")
+	Freaky:SetTheme("Freak")
+
+	-- and the loud ones turn, driven by one shared connection
+	local spun = gradientOf(handle)
+	local was = spun.Rotation
+	for _ = 1, 30 do RS.RenderStepped:Fire(1 / 60) end
+	assert(spun.Rotation ~= was, "the drifting gradients are not turning")
+	assert(spun.Rotation >= 0 and spun.Rotation < 360, "rotation should stay in range")
+
+	-- rows acknowledge a press with a ring and a hover bar
+	local Feel = Main:CreateSection("Feel")
+	local row = Feel:Button({ Title = "Press me" }).Instance
+	local bar = row:FindFirstChild("Edge")
+	assert(bar, "a row has no hover bar")
+	assert(bar.Size.Y.Scale == 0, "the hover bar should start collapsed")
+	row.MouseEnter:Fire()
+	assert(bar.Size.Y.Scale > 0, "hovering should grow the bar")
+	row.MouseLeave:Fire()
+	assert(bar.Size.Y.Scale == 0, "leaving should retract it")
+
+	row.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 0, 0) })
+	local ring = row:FindFirstChild("Ripple")
+	assert(ring, "pressing a row should leave a ripple")
+	MOCK.step(0.6)
+	assert(ring.Parent == nil, "the ripple should clean itself up")
+
+	-- opening the sidebar sweeps a line down the panel
+	Window:SetOpen(false)
+	MOCK.step(0.8)
+	Window:SetOpen(true)
+	assert(panel:FindFirstChild("Sweep"), "opening should sweep the panel")
+	MOCK.step(0.8)
+	assert(panel:FindFirstChild("Sweep") == nil, "the sweep should clean itself up")
+
+	-- a lit toggle runs the gradient; an unlit one does not
+	local lit = Feel:Toggle({ Title = "Lit" })
+	local trackGradient = gradientOf(lit.Instance:FindFirstChild("Slot"):FindFirstChild("Track"))
+	assert(trackGradient, "the toggle track has no gradient")
+	assert(trackGradient.Enabled == false, "an off toggle should not run the gradient")
+	lit:Set(true)
+	assert(trackGradient.Enabled == true, "an on toggle should run the gradient")
+	lit:Set(false)
+	assert(trackGradient.Enabled == false, "turning it off should stop the gradient")
+
+	-- sections are dealt in one after another
+	local Deal = Player:CreateSection("Deal")
+	Deal:Label("something")
+	assert(#Player.Sections >= 1, "the tab does not track its sections")
+	Player:Select()
+	assert(Player.Sections[1].GroupTransparency == 1, "sections should start hidden on select")
+	MOCK.step(0.5)
+	assert(Player.Sections[1].GroupTransparency == 0, "sections should fade in")
+	Main:Select()
+	MOCK.step(0.5)
+
+	-- section headings are marked, not just lettered
+	local head = Deal.Instance:FindFirstChild("Head")
+	assert(head and head:FindFirstChild("Tick"), "a section heading has no accent tick")
+end
+
+--------------------------------------------------------------------
 -- flags, destroy, unload
 --------------------------------------------------------------------
-Love:SetFlag("aimbot", true)
+Freaky:SetFlag("aimbot", true)
 assert(toggle:Get() == true, "SetFlag did not reach the element")
 
 toggle:Destroy()
-assert(Love.Options.aimbot == nil, "Destroy did not release the flag")
+assert(Freaky.Options.aimbot == nil, "Destroy did not release the flag")
 
-local Second = Love:CreateWindow({ Title = "Second" })
-assert(#Love.Windows == 2, "second window not tracked")
+local Second = Freaky:CreateWindow({ Title = "Second" })
+assert(#Freaky.Windows == 2, "second window not tracked")
 Second:Destroy()
-assert(#Love.Windows == 1, "Destroy did not untrack the window")
+assert(#Freaky.Windows == 1, "Destroy did not untrack the window")
 
-Love:Unload()
-assert(Love.Unloaded == true, "Unload did not mark the library")
-assert(Love.Root.Parent == nil, "Unload did not remove the root")
+Freaky:Unload()
+assert(Freaky.Unloaded == true, "Unload did not mark the library")
+assert(Freaky.Root.Parent == nil, "Unload did not remove the root")
 
 -- a stray input after unloading must not throw
 MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.RightShift }, false)
 MOCK.step(1)
 
-print("all LoveUI checks passed")
+print("all FreakyUI checks passed")

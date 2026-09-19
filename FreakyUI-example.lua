@@ -1,6 +1,6 @@
 --!nonstrict
 --[[
-	LoveUI · example script
+	FreakyUI · example script
 
 	Paste this into your executor. It loads the library straight from
 	GitHub, builds a sidebar with three tabs and shows every element the
@@ -10,17 +10,17 @@
 	screen to the right to open it, or press Right Shift.
 ]]
 
-local Love = loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/LoveUI.lua"))()
+local Freaky = loadstring(game:HttpGet("https://raw.githubusercontent.com/iamdookie1/Ui2/main/FreakyUI.lua"))()
 
 -- ================================================================
 --  WINDOW
 -- ================================================================
 
-local Window = Love:CreateWindow({
-	Title     = "Love Example",
-	SubTitle  = "v" .. Love.Version,
-	Theme      = "Rose",         -- Rose · Bubblegum · Wine · Midnight · Blush · Sakura
-	Background = "hearts",       -- hearts · glow · plain
+local Window = Freaky:CreateWindow({
+	Title     = "Freaky Example",
+	SubTitle  = "v" .. Freaky.Version,
+	Theme      = "Freak",        -- Freak · Venom · Cyber · Inferno · Vapor · Bubblegum · Void · Sorbet
+	Background = "sparks",       -- sparks · glow · plain
 	Width      = 300,            -- how far the sidebar slides in
 	MaxWidth   = 620,            -- how far it can be dragged open
 	Keybind    = Enum.KeyCode.RightShift,
@@ -39,11 +39,12 @@ do
 	Info:Label("Drag the handle, or press Right Shift.")
 	Info:Paragraph({
 		Title   = "About",
-		Content = "LoveUI is a sidebar, not a floating panel. It lives off the "
+		Content = "FreakyUI is a sidebar, not a floating panel. It lives off the "
 			.. "left edge of the screen so it never covers the middle of your "
-			.. "game, and every theme it ships with is some shade of pink. "
-			.. "Keep dragging the handle right once it is open and the panel "
-			.. "widens instead of getting taller.",
+			.. "game. Every palette runs two accents as a gradient, and the "
+			.. "loud ones turn, so nothing here sits still. Keep dragging the "
+			.. "handle right once it is open and the panel widens instead of "
+			.. "getting taller.",
 	})
 
 	local Combat = Main:CreateSection("Combat")
@@ -94,7 +95,7 @@ do
 
 	Combat:ColorPicker({
 		Title    = "Tracer colour",
-		Default  = Color3.fromRGB(244, 114, 182),
+		Default  = Color3.fromRGB(255, 46, 172),
 		Flag     = "TracerColour",
 		Callback = function(colour)
 			print("tracer:", colour)
@@ -107,7 +108,7 @@ do
 		Callback    = function()
 			Window:Notify({
 				Title    = "Fired",
-				Content  = "Targeting " .. tostring(Love:GetFlag("AimPart")),
+				Content  = "Targeting " .. tostring(Freaky:GetFlag("AimPart")),
 				Duration = 3,
 			})
 		end,
@@ -183,7 +184,7 @@ do
 		Default  = Enum.KeyCode.P,
 		Flag     = "PanicKey",
 		Callback = function()
-			Love:Notify({ Title = "Panic", Content = "Everything off.", Duration = 2 })
+			Freaky:Notify({ Title = "Panic", Content = "Everything off.", Duration = 2 })
 		end,
 	})
 
@@ -246,7 +247,7 @@ do
 		local RunService = game:GetService("RunService")
 		local Players = game:GetService("Players")
 		while task.wait(1) do
-			if Love.Unloaded then break end
+			if Freaky.Unloaded then break end
 			local ok, ms = pcall(function()
 				return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
 			end)
@@ -269,7 +270,7 @@ do
 	Palette:Label("Every palette has pink in it somewhere.")
 
 	-- ThemeDropdown is wired to the library rather than to you: pick a
-	-- theme in the header, or call Love:SetTheme anywhere, and this row
+	-- theme in the header, or call Freaky:SetTheme anywhere, and this row
 	-- moves with it.
 	Palette:ThemeDropdown({ Title = "Theme" })
 
@@ -277,7 +278,7 @@ do
 		Title       = "Next theme",
 		Description = "Cycles; watch the dropdown above follow.",
 		Callback    = function()
-			Love:NextTheme()
+			Freaky:NextTheme()
 		end,
 	})
 
@@ -324,7 +325,7 @@ do
 		Title       = "Unload",
 		Description = "Removes the interface and every connection.",
 		Callback    = function()
-			Love:Unload()
+			Freaky:Unload()
 		end,
 	})
 end
@@ -333,8 +334,8 @@ end
 
 Main:Select()
 
-Love:Notify({
-	Title    = "LoveUI",
+Freaky:Notify({
+	Title    = "FreakyUI",
 	Content  = "Loaded. Drag the handle or press Right Shift.",
 	Duration = 5,
 })
