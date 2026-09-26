@@ -75,7 +75,7 @@ local Window = Void:CreateWindow({
     Status       = "idle",
     Scope        = "game",        -- or "universal", for configs
     StartOpen    = true,
-    MobileButton = true,
+    Opener       = "Topbar",      -- or "Fob", or "None"
     Watermark    = true,
 })
 ```
@@ -91,15 +91,37 @@ local Window = Void:CreateWindow({
 | `Window:Notify(cfg)` | same as `Void:Notify` |
 | `Window:Destroy()` | remove this window only |
 
-Drag the title bar to move it. The dash folds it, the cross hides it. On a
-phone the fob toggles it, since there is no Right Shift — tap it to toggle,
-drag it to move it somewhere else.
+Drag the title bar to move it. The dash folds it, the cross hides it.
 
-### The watermark and the fob
+### Opening it
 
-Both sit **below Roblox's own top bar** rather than under it, using
-`GuiService.TopbarInset`, and both follow it if Roblox resizes it mid-game.
-Both are draggable and stay on screen.
+Right Shift toggles the window everywhere. Next to that, `Opener` picks the
+button that does it by touch or click:
+
+| `Opener` | What you get |
+| --- | --- |
+| `"Topbar"` (default) | a round button **inside Roblox's top bar**, just right of Roblox's own buttons and the same size as them. Its ring lights up while the window is open. It cannot be dragged, so a tap always means open or close. |
+| `"Fob"` | the older square button under the top bar: tap to toggle, drag to move |
+| `"None"` | no button; the key is the only way in |
+
+The top bar button reads `GuiService.TopbarInset`, so it moves with Roblox's
+buttons and resizes with the bar: 44px on the current top bar, 32px on the
+old one. Several Void windows line up side by side. If a game hides the top
+bar, the button drops to the top left corner of the screen.
+
+```lua
+Window.Opener.Kind              -- "Topbar" or "Fob"
+Window.Opener.Instance          -- the button
+Window.Opener.SetVisible(false) -- hide it and keep the key
+```
+
+`MobileButton = false` still works and means `"None"`.
+
+### The watermark
+
+It sits **below Roblox's own top bar** rather than under it, using
+`GuiService.TopbarInset`, and follows it if Roblox resizes it mid-game.
+It is draggable and stays on screen.
 
 ```lua
 Window.Watermark.SetText("my script · v2")
@@ -108,11 +130,13 @@ Window.Watermark.Reset()      -- park it back under the top bar
 Window.Watermark.Instance     -- drag it yourself if you want
 ```
 
-Pass `Watermark = false` or `MobileButton = false` on the window to skip
-either.
+Pass `Watermark = false` on the window to skip it.
 
 `Window.Open`, `Window.Minimised`, `Window.Tabs`, `Window.ActiveTab`,
-`Window.Frame` and `Window.Watermark` are readable.
+`Window.Frame`, `Window.Opener` and `Window.Watermark` are readable.
+
+`Window:Destroy()` removes everything the window put on screen (its
+button and its watermark) and stops its toggle key.
 
 ---
 
@@ -317,7 +341,7 @@ something is being dragged, it owns the pointer.
 Void.Capture.Owner     -- what holds it, or nil
 ```
 
-A slider, a colour bar, the window, the watermark and the fob all take it
+A slider, a colour bar, the window, the watermark and the fob (if you use it) all take it
 while they are being dragged. Every hover check asks first, and every
 scrolling frame in the library is frozen for the duration, so a drag on a
 phone cannot also scroll the page out from under your thumb.

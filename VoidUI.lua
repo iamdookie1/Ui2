@@ -1,7 +1,7 @@
 --!nonstrict
 --[[
 	================================================================
-	  VOID  ·  v1.1.0
+	  VOID  ·  v1.2.0
 	  A monochrome interface library for Roblox script executors.
 	================================================================
 
@@ -40,7 +40,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Void = {
 	Name        = "Void",
-	Version     = "1.1.0",
+	Version     = "1.2.0",
 
 	Windows     = {},
 	Flags       = {},
@@ -484,7 +484,9 @@ local function Drag(frame, handle, opts)
 	opts = opts or {}
 	local dragging, grabX, grabY, origin, moved = false, 0, 0, nil, false
 
-	handle.InputBegan:Connect(function(input)
+	local links = {}
+
+	links[1] = handle.InputBegan:Connect(function(input)
 		if not IsClick(input) then return end
 		dragging, moved = true, false
 		grabX, grabY = input.Position.X, input.Position.Y
@@ -493,7 +495,7 @@ local function Drag(frame, handle, opts)
 		Run(opts.OnStart)
 	end)
 
-	Void:Connect(UserInputService.InputChanged, function(input)
+	links[2] = Void:Connect(UserInputService.InputChanged, function(input)
 		if not dragging or not origin then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseMovement
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -516,14 +518,23 @@ local function Drag(frame, handle, opts)
 		frame.Position = UDim2.new(origin.X.Scale, x, origin.Y.Scale, y)
 	end)
 
-	Void:Connect(UserInputService.InputEnded, function(input)
+	links[3] = Void:Connect(UserInputService.InputEnded, function(input)
 		if not dragging or not IsClick(input) then return end
 		dragging = false
 		Capture.Give(frame)
 		Run(opts.OnEnd, moved)
 	end)
 
-	return { Moved = function() return moved end }
+	return {
+		Moved = function() return moved end,
+		-- for when the thing being dragged goes away: a drag that never
+		-- sees its release would hold the capture, and every page would
+		-- stay frozen
+		Stop = function()
+			for _, link in ipairs(links) do link:Disconnect() end
+			if dragging then dragging = false; Capture.Give(frame) end
+		end,
+	}
 end
 
 -- how far down the screen Roblox's own top bar reaches, so nothing of
@@ -536,6 +547,55 @@ local function TopInset()
 	end)
 	return top
 end
+
+-- ================================================================
+--  THE TOP BAR BUTTON
+-- ================================================================
+--
+--  Each window gets a round button that sits in Roblox's own top bar,
+--  in the free strip to the right of Roblox's buttons, shaped and sized
+--  like them. It cannot be dragged, so a tap only ever means one thing.
+--  Several windows line up side by side. With the top bar hidden, the
+--  buttons fall back to the top left corner of the screen.
+
+local Openers = {}
+
+-- where the free strip starts and how tall the bar is, or nil when
+-- there is no top bar to sit in
+local function TopbarSpace()
+	local left, height
+	pcall(function()
+		local rect = GuiService.TopbarInset
+		if rect and rect.Max and rect.Max.Y and rect.Max.Y > 0 then
+			left, height = rect.Min.X, rect.Max.Y
+		end
+	end)
+	return left, height
+end
+
+local function LayOpeners()
+	for index = #Openers, 1, -1 do
+		if not Openers[index].Parent then table.remove(Openers, index) end
+	end
+
+	local left, height = TopbarSpace()
+	local size, x, y
+	if height then
+		-- Roblox's own buttons are 44 on the current bar and 32 on the old one
+		size = height >= 50 and 44 or Clamp(height - 4, 24, 32)
+		x = (left and left > 0) and left + 4 or 12
+		y = math.floor((height - size) / 2)
+	else
+		size, x, y = 34, 12, 8
+	end
+
+	for index, button in ipairs(Openers) do
+		button.Size = UDim2.fromOffset(size, size)
+		button.Position = UDim2.fromOffset(x + (index - 1) * (size + 8), y)
+	end
+end
+
+Void:Connect(GuiService:GetPropertyChangedSignal("TopbarInset"), LayOpeners)
 
 
 -- ================================================================
@@ -2707,12 +2767,25 @@ function Void.CreateWindow(a, b)
 	----------------------------------------------------------------
 	-- showing, hiding, folding, dragging
 	----------------------------------------------------------------
+	-- everything this window listens to outside its own frame, and every
+	-- drag it owns, so Destroy can take all of it away again
+	local links, drags = {}, {}
+	local function listen(signal, fn)
+		local link = Void:Connect(signal, fn)
+		table.insert(links, link)
+		return link
+	end
+
+	-- set once the top bar button exists; lights it while the window is open
+	local paintOpener
+
 	function Window.SetOpen(p1, p2)
 		local open = p2
 		if p1 ~= Window then open = p1 end
 		Window.Open = open and true or false
 
 		if not Window.Open then Popout.Close() end
+		if paintOpener then paintOpener() end
 
 		-- the window shrinks slightly as it goes and comes back to size,
 		-- which reads as a panel arriving rather than one blinking on
@@ -2756,7 +2829,7 @@ function Void.CreateWindow(a, b)
 	closeButton.MouseButton1Click:Connect(function() Window.SetOpen(Window, false) end)
 
 	-- drag by the title bar
-	Drag(frame, bar, {
+	drags[#drags + 1] = Drag(frame, bar, {
 		OnStart = function()
 			Popout.Close()
 			Move(frameEdge, { Color = Ink.Edge, Transparency = 0.4 }, Ease.Tap)
@@ -2766,7 +2839,7 @@ function Void.CreateWindow(a, b)
 		end,
 	})
 
-	Void:Connect(UserInputService.InputBegan, function(input, processed)
+	listen(UserInputService.InputBegan, function(input, processed)
 		if processed then return end
 		if Window.ToggleKey and input.KeyCode == Window.ToggleKey then Window.Toggle() end
 	end)
@@ -2787,9 +2860,18 @@ function Void.CreateWindow(a, b)
 		return Window.Title
 	end
 
+	-- Takes everything with it: the top bar button, the fob, the watermark
+	-- and the toggle key. Leaving the key connected meant a destroyed
+	-- window still answered Right Shift, and a leftover button opened
+	-- nothing.
 	function Window.Destroy()
 		Popout.Close()
+		for _, drag in ipairs(drags) do drag.Stop() end
+		for _, link in ipairs(links) do link:Disconnect() end
+		if Window.Opener then Window.Opener.Instance:Destroy() end
+		if Window.Watermark then Window.Watermark.Instance:Destroy() end
 		frame:Destroy()
+		LayOpeners()
 		for index, entry in ipairs(Void.Windows) do
 			if entry == Window then table.remove(Void.Windows, index); break end
 		end
@@ -3016,15 +3098,60 @@ function Void.CreateWindow(a, b)
 	end
 
 	----------------------------------------------------------------
-	-- the two things that live outside the window. Both sit below
-	-- Roblox's own top bar rather than under it, and both can be dragged
-	-- wherever you want them.
+	-- the things that live outside the window: the button that opens
+	-- it, and the watermark
 	----------------------------------------------------------------
 	local function parkBelowTopbar(object, x)
 		object.Position = UDim2.fromOffset(x, TopInset() + 8)
 	end
 
-	if cfg.MobileButton ~= false then
+	-- "Topbar" (the default) is a button in Roblox's top bar. "Fob" is the
+	-- older square under it, which can be dragged about. "None" leaves the
+	-- key as the only way in. MobileButton = false still means "None".
+	local opener = tostring(cfg.Opener or (cfg.MobileButton == false and "None") or "Topbar"):lower()
+	if opener ~= "topbar" and opener ~= "fob" and opener ~= "none" then
+		warn('[Void] Opener must be "Topbar", "Fob" or "None" (got "'
+			.. tostring(cfg.Opener) .. '"); using "Topbar"')
+		opener = "topbar"
+	end
+
+	if opener == "topbar" then
+		local button = New("TextButton", {
+			Name = "Opener", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
+			BackgroundTransparency = 0.08, Size = UDim2.fromOffset(44, 44),
+			ZIndex = 20, Parent = WindowLayer,
+		})
+		New("UICorner", { CornerRadius = UDim.new(1, 0), Parent = button })
+		Wash(button, "BackgroundColor3", "Panel")
+		local ring = Hair(button, "Line", 0)
+		local glyph = Glyph(button, 14, 21)
+
+		local hovered = false
+		paintOpener = function()
+			if not button.Parent then return end
+			-- lit while the window is open, the one piece of state it carries
+			-- and the ring brightens under the cursor. The fill stays put:
+			-- the mark's gap is cut in the panel colour and would show.
+			local colour = Window.Open and Ink.Edge or (hovered and Ink.Sub or Ink.Line)
+			Move(ring, { Color = colour, Transparency = Window.Open and 0.35 or 0 }, Ease.Tap)
+		end
+
+		button.MouseEnter:Connect(function() hovered = true; paintOpener() end)
+		button.MouseLeave:Connect(function() hovered = false; paintOpener() end)
+		button.MouseButton1Click:Connect(function()
+			glyph.Flicker()
+			Window.Toggle()
+		end)
+
+		table.insert(Openers, button)
+		LayOpeners()
+
+		Window.Opener = {
+			Instance = button,
+			Kind = "Topbar",
+			SetVisible = function(state) button.Visible = state and true or false end,
+		}
+	elseif opener == "fob" then
 		local fob = New("TextButton", {
 			Name = "Fob", AutoButtonColor = false, Text = "", BorderSizePixel = 0,
 			Size = UDim2.fromOffset(34, 34), ZIndex = 20, Parent = WindowLayer,
@@ -3037,14 +3164,22 @@ function Void.CreateWindow(a, b)
 
 		-- a drag moves it, a tap toggles the window. Without the distinction
 		-- every attempt to move it would also open something.
-		Drag(fob, fob, {
+		drags[#drags + 1] = Drag(fob, fob, {
 			Clamp = true,
 			OnEnd = function(moved)
 				if not moved then Window.Toggle() end
 			end,
 		})
 		Window.Fob = fob
+		Window.Opener = {
+			Instance = fob,
+			Kind = "Fob",
+			SetVisible = function(state) fob.Visible = state and true or false end,
+		}
 	end
+
+	-- the watermark takes the corner when the fob is not in it
+	local stampHome = opener == "fob" and 54 or 12
 
 	if cfg.Watermark ~= false then
 		local stamp = New("TextButton", {
@@ -3054,7 +3189,7 @@ function Void.CreateWindow(a, b)
 		Sharp(4, stamp)
 		Wash(stamp, "BackgroundColor3", "Panel")
 		Hair(stamp, "Line", 0)
-		parkBelowTopbar(stamp, cfg.MobileButton == false and 12 or 54)
+		parkBelowTopbar(stamp, stampHome)
 
 		local stampPip = New("Frame", {
 			Name = "Pip", BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5),
@@ -3071,25 +3206,26 @@ function Void.CreateWindow(a, b)
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
 
-		Drag(stamp, stamp, { Clamp = true })
-
-		-- Roblox can resize its own top bar while the game is running
-		Void:Connect(GuiService:GetPropertyChangedSignal("TopbarInset"), function()
-			if stamp.Position.Y.Offset < TopInset() + 8 then
-				parkBelowTopbar(stamp, stamp.Position.X.Offset)
-			end
-			if Window.Fob and Window.Fob.Position.Y.Offset < TopInset() + 8 then
-				parkBelowTopbar(Window.Fob, Window.Fob.Position.X.Offset)
-			end
-		end)
+		drags[#drags + 1] = Drag(stamp, stamp, { Clamp = true })
 
 		Window.Watermark = {
 			Instance = stamp,
 			SetText = function(text) stampText.Text = tostring(text) end,
 			SetVisible = function(state) stamp.Visible = state and true or false end,
-			Reset = function() parkBelowTopbar(stamp, cfg.MobileButton == false and 12 or 54) end,
+			Reset = function() parkBelowTopbar(stamp, stampHome) end,
 		}
 	end
+
+	-- Roblox can resize its own top bar while the game is running. This
+	-- used to be wired up only when there was a watermark, so turning the
+	-- watermark off left the fob stranded under a taller bar.
+	listen(GuiService:GetPropertyChangedSignal("TopbarInset"), function()
+		for _, object in ipairs({ Window.Fob or false, Window.Watermark and Window.Watermark.Instance or false }) do
+			if object and object.Position.Y.Offset < TopInset() + 8 then
+				parkBelowTopbar(object, object.Position.X.Offset)
+			end
+		end
+	end)
 
 	Window.SetOpen(Window, Window.Open)
 	table.insert(Void.Windows, Window)
@@ -3127,7 +3263,7 @@ function Void.Unload()
 
 	for index = #Void.Windows, 1, -1 do
 		local window = Void.Windows[index]
-		if window.Fob then window.Fob:Destroy() end
+		if window.Opener then window.Opener.Instance:Destroy() end
 		if window.Watermark then window.Watermark.Instance:Destroy() end
 	end
 	Void.Windows = {}
