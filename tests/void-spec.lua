@@ -495,7 +495,6 @@ do
 	assert(stamp.Position.Y.Offset >= inset.Max.Y,
 		"the watermark sits under Roblox's top bar: " .. stamp.Position.Y.Offset
 			.. " vs " .. inset.Max.Y)
-	assert(Window.Fob.Position.Y.Offset >= inset.Max.Y, "so does the fob")
 
 	-- it drags, and it stays on screen
 	local from = stamp.Position.X.Offset
@@ -515,17 +514,52 @@ do
 	Window.Watermark.Reset()
 	assert(stamp.Position.Y.Offset >= inset.Max.Y, "Reset should park it below the top bar again")
 
-	-- the fob toggles on a tap, but not at the end of a drag
-	local wasOpen = Window.Open
-	Window.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
-	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
-	assert(Window.Open ~= wasOpen, "tapping the fob should toggle the window")
-	Window:SetOpen(wasOpen)
+	-- the window opens from a button in Roblox's own top bar
+	local opener = Window.Opener
+	assert(opener and opener.Kind == "Topbar", "the default opener should be the top bar button")
+	assert(Window.Fob == nil, "no fob unless one is asked for")
+	local button = opener.Instance
+	assert(button.Position.Y.Offset + button.Size.Y.Offset <= inset.Max.Y,
+		"the button should sit inside the top bar, not under it")
 
-	Window.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
-	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(120, 160, 0) })
+	local wasOpen = Window.Open
+	button.MouseButton1Click:Fire()
+	assert(Window.Open ~= wasOpen, "clicking the top bar button should toggle the window")
+	button.MouseButton1Click:Fire()
+	assert(Window.Open == wasOpen, "and clicking again should toggle it back")
+
+	-- it is not a drag handle: pulling on it leaves it where it is
+	local home = button.Position
+	button.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 20, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(220, 260, 0) })
 	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
-	assert(Window.Open == wasOpen, "dragging the fob must not toggle the window")
+	assert(button.Position == home or (button.Position.X.Offset == home.X.Offset
+		and button.Position.Y.Offset == home.Y.Offset), "the top bar button must not drag")
+
+	-- it follows the top bar when Roblox moves its buttons or resizes it
+	local Gui = game:GetService("GuiService")
+	local before = Gui.TopbarInset
+	Gui.TopbarInset = Rect.new(120, 0, 800, 58)
+	Gui:GetPropertyChangedSignal("TopbarInset"):Fire()
+	assert(button.Position.X.Offset >= 120, "the button should start where Roblox's buttons end")
+	assert(button.Size.Y.Offset == 44, "and match the height of Roblox's own buttons")
+	assert(button.Position.Y.Offset + 44 <= 58, "and stay inside the taller bar")
+
+	-- a second window's button lines up beside the first, not on top of it
+	local Beside = Void:CreateWindow({ Title = "Beside", Watermark = false })
+	local other = Beside.Opener.Instance
+	assert(other.Position.X.Offset >= button.Position.X.Offset + button.Size.X.Offset,
+		"two top bar buttons should not overlap")
+	Beside:Destroy()
+	assert(other.Parent == nil, "Destroy should take the top bar button with it")
+
+	-- with no top bar at all, the button falls back to the corner
+	Gui.TopbarInset = Rect.new(0, 0, 0, 0)
+	Gui:GetPropertyChangedSignal("TopbarInset"):Fire()
+	assert(button.Position.X.Offset >= 0 and button.Position.Y.Offset >= 0,
+		"the button should stay on screen with the top bar hidden")
+	Gui.TopbarInset = before
+	Gui:GetPropertyChangedSignal("TopbarInset"):Fire()
 end
 
 --------------------------------------------------------------------
@@ -610,8 +644,60 @@ assert(Void.Options.aimbot == nil, "Destroy did not release the flag")
 
 local Second = Void:CreateWindow({ Title = "Second" })
 assert(#Void.Windows == 2, "second window not tracked")
+local secondButton = Second.Opener.Instance
+local secondStamp = Second.Watermark.Instance
+local secondOpen = Second.Open
 Second:Destroy()
 assert(#Void.Windows == 1, "Destroy did not untrack the window")
+assert(secondButton.Parent == nil and secondStamp.Parent == nil,
+	"Destroy left the window's button or watermark behind")
+MOCK.UIS.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.RightShift }, false)
+assert(Second.Open == secondOpen, "a destroyed window still answered its toggle key")
+
+-- destroying a window mid-drag must hand the capture back, or every
+-- page stays frozen
+do
+	local Doomed = Void:CreateWindow({ Title = "Doomed" })
+	Doomed.Frame:FindFirstChild("Bar").InputBegan:Fire({
+		UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(10, 10, 0) })
+	assert(Void.Capture.Owner == Doomed.Frame, "the drag should hold the capture")
+	Doomed:Destroy()
+	assert(Void.Capture.Owner == nil, "Destroy left the capture held")
+	assert(Window.ActiveTab.Page.ScrollingEnabled == true, "and pages still frozen")
+end
+
+-- the older draggable fob is still there for anyone who asks for it
+do
+	local Old = Void:CreateWindow({ Title = "Old", Opener = "Fob", Watermark = false })
+	assert(Old.Fob and Old.Opener.Kind == "Fob", "Opener = \"Fob\" should build the fob")
+	local wasOpen = Old.Open
+	Old.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(Old.Open ~= wasOpen, "tapping the fob should toggle the window")
+	Old:SetOpen(wasOpen)
+	Old.Fob.InputBegan:Fire({ UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.new(20, 60, 0) })
+	MOCK.UIS.InputChanged:Fire({ UserInputType = Enum.UserInputType.MouseMovement, Position = Vector3.new(120, 160, 0) })
+	MOCK.UIS.InputEnded:Fire({ UserInputType = Enum.UserInputType.MouseButton1 })
+	assert(Old.Open == wasOpen, "dragging the fob must not toggle the window")
+
+	-- with no watermark, the fob still follows a taller top bar
+	local Gui = game:GetService("GuiService")
+	local before = Gui.TopbarInset
+	Old.Fob.Position = UDim2.fromOffset(12, 50)
+	Gui.TopbarInset = Rect.new(0, 0, 0, 90)
+	Gui:GetPropertyChangedSignal("TopbarInset"):Fire()
+	assert(Old.Fob.Position.Y.Offset >= 90, "the fob was left under the top bar")
+	Gui.TopbarInset = before
+	Old:Destroy()
+	assert(Old.Fob.Parent == nil, "Destroy left the fob behind")
+end
+
+-- and MobileButton = false still means no button at all
+do
+	local Bare = Void:CreateWindow({ Title = "Bare", MobileButton = false, Watermark = false })
+	assert(Bare.Opener == nil and Bare.Fob == nil, "MobileButton = false should build no opener")
+	Bare:Destroy()
+end
 
 Void:Unload()
 assert(Void.Unloaded == true, "Unload did not mark the library")

@@ -18,6 +18,7 @@ local Window = Void:CreateWindow({
 	Keybind  = Enum.KeyCode.RightShift,
 	Status   = "idle",
 	Scope    = "game",          -- "game" files configs per place, "universal" shares them
+	Opener   = "Topbar",        -- a button in Roblox's top bar; "Fob" or "None" instead
 })
 
 -- ================================================================
